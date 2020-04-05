@@ -1,60 +1,78 @@
-use humantime::{format_rfc3339, parse_rfc3339, format_duration};
-use rusoto_dynamodb::AttributeValue;
+use humantime::{format_rfc3339, parse_rfc3339};
+use rusoto_dynamodb::{AttributeValue, DynamoDbClient, DynamoDb};
+use rusoto_core::RusotoError;
 use std::collections::HashMap;
-use std::fmt;
 use std::time::SystemTime;
 
 type Item = HashMap<String, AttributeValue>;
 
-pub const TABLE_NAME: &'static str = "hacksteaders";
-
-#[macro_export]
-macro_rules! hacksteader_opening_blurb { ( $hackstead_cost:expr ) => { format!(
-r#"
-*Your Own Hackagotchi Homestead!*
-
-:corn: Grow your own Farmables which make Hackagotchi more powerful!
-:sparkling_heart: Earn passive income by collecting adorable Hackagotchi!
-:money_with_wings: Buy, sell and trade Farmables and Hackagotchi at an open auction!
-
-Hacksteading costs *{} GP*.
-As a Hacksteader, you'll have a plot of land on which to grow your own Farmables, which can be fed to
-Hackagotchi to make them more powerful. More powerful Hackagotchi generate more passive income!
-You can also buy, sell, and trade Farmables and Hackagotchi on an open auction space.
-"#,
-$hackstead_cost
-) } }
+pub const TABLE_NAME: &'static str = "hackagotchi";
 
 
-pub struct HacksteaderProfile {
-    slack_id: String,
-    /// Indicates when this Hacksteader first joined the elite community.
-    joined: SystemTime,
+pub struct Hacksteader {
+    pub user_id: String,
+    pub profile: HacksteaderProfile,
+    pub gotchis: Vec<Gotchi>,
 }
-impl fmt::Display for HacksteaderProfile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "*Hacksteader <@{}>*\n\n joined {} ago (roughly)",
-            self.slack_id,
-            format_duration(SystemTime::now().duration_since(self.joined).unwrap()),
-        )
+impl Hacksteader {
+    pub async fn new_in_db(db: &DynamoDbClient, user_id: String) -> Result<(), RusotoError<rusoto_dynamodb::PutItemError>> {
+        // just give them a profile for now
+        db.put_item(rusoto_dynamodb::PutItemInput {
+            item: HacksteaderProfile::new().item(user_id),
+            table_name: TABLE_NAME.to_string(),
+            ..Default::default()
+        })
+        .await
+        .map(|_| ())
     }
-}
-impl HacksteaderProfile {
-    pub fn new(slack_id: String) -> Self {
-        Self {
-            slack_id,
-            joined: SystemTime::now(),
+    pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Option<Self> {
+        let query = db.query(rusoto_dynamodb::QueryInput {
+            table_name: TABLE_NAME.to_string(),
+            key_condition_expression: Some("id = :db_id".to_string()),
+            expression_attribute_values: Some({
+                let mut m = HashMap::new();
+                m.insert(":db_id".to_string(), AttributeValue {
+                    s: Some(user_id.clone()),
+                    ..Default::default()
+                });
+                m
+            }),
+            ..Default::default()
+        })
+        .await;
+        let items = query.ok()?.items?;
+
+        let mut profile = None;
+        let mut gotchis = Vec::new();
+
+        for item in items.iter() {
+            (|| -> Option<()> {
+                let sk = item.get("sk")?.s.as_ref()?;
+                match sk.chars().next()? {
+                    'P' => profile = Some(HacksteaderProfile::from_item(item)?),
+                    'G' => gotchis.push(Gotchi::from_item(item)?),
+                    _ => unreachable!()
+                }
+                Some(())
+            })();
         }
+        Some(Hacksteader {
+            profile: profile?,
+            gotchis,
+            user_id,
+        })
     }
+}
 
-    /// Returns an empty profile Item for the given slack ID.
-    /// Useful for searching for a given slack user's Hacksteader profile
-    pub fn empty_item(slack_id: String) -> Item {
+pub struct Gotchi {
+    pub name: String,
+    pub id: String,
+}
+impl Gotchi {
+    fn item(&self, slack_id: String) -> Item {
         let mut m = Item::new();
         m.insert(
-            "slack_id".to_string(),
+            "id".to_string(),
             AttributeValue {
                 s: Some(slack_id),
                 ..Default::default()
@@ -63,15 +81,68 @@ impl HacksteaderProfile {
         m.insert(
             "sk".to_string(),
             AttributeValue {
-                s: Some("profile".to_string()),
+                s: Some({
+                    let mut sk = String::with_capacity(self.id.len() + self.name.len() + 3);
+                    sk.push('G');
+                    sk.push('#');
+                    sk.push_str(&self.name);
+                    sk.push('#');
+                    sk.push_str(&self.id);
+                    sk
+                }),
                 ..Default::default()
             },
         );
         m
     }
 
-    pub fn item(&self) -> Item {
-        let mut m = Self::empty_item(self.slack_id.clone());
+    pub fn from_item(item: &Item) -> Option<Self> {
+        let mut sk_parts = item.get("sk")?.s.as_ref()?.split("#");
+        
+        //you did give us a gotchi ID, right?
+        assert_eq!("G", sk_parts.next()?);
+
+        Some(Self {
+            name: sk_parts.next()?.to_string(),
+            id: sk_parts.next()?.to_string()
+        })
+    }
+}
+
+pub struct HacksteaderProfile {
+    /// Indicates when this Hacksteader first joined the elite community.
+    pub joined: SystemTime,
+}
+impl HacksteaderProfile {
+    pub fn new() -> Self {
+        Self {
+            joined: SystemTime::now(),
+        }
+    }
+
+    /// Returns an empty profile Item for the given slack ID.
+    /// Useful for searching for a given slack user's Hacksteader profile
+    fn empty_item(user_id: String) -> Item {
+        let mut m = Item::new();
+        m.insert(
+            "id".to_string(),
+            AttributeValue {
+                s: Some(user_id),
+                ..Default::default()
+            },
+        );
+        m.insert(
+            "sk".to_string(),
+            AttributeValue {
+                s: Some("P".to_string()),
+                ..Default::default()
+            },
+        );
+        m
+    }
+
+    pub fn item(&self, user_id: String) -> Item {
+        let mut m = Self::empty_item(user_id.clone());
         m.insert(
             "joined".to_string(),
             AttributeValue {
@@ -84,7 +155,6 @@ impl HacksteaderProfile {
 
     pub fn from_item(item: &Item) -> Option<Self> {
         Some(Self {
-            slack_id: item.get("slack_id")?.s.as_ref()?.to_string(),
             joined: item
                 .get("joined")
                 .and_then(|a| a.s.as_ref())

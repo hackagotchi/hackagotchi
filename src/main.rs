@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 mod banker;
 mod hacksteader;
 
+use hacksteader::Hacksteader;
+
 fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
 }
@@ -33,71 +35,102 @@ struct SlashCommand {
     response_url: String,
 }
 
-fn render_hacksteader(
+fn render_hackstead(hs: &Hacksteader) -> Value {
+    use humantime::format_duration;
+    use std::time::SystemTime;
+
+    fn mrkdwn(txt: &str) -> Value {
+        json!({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": txt,
+            }
+        })
+    }
+
+    let mut blocks: Vec<Value> = Vec::new();
+    
+    blocks.push(mrkdwn(&format!(
+        "*Hacksteader <@{}>*\n joined {} ago (roughly)",
+        hs.user_id,
+        format_duration(SystemTime::now().duration_since(hs.profile.joined).unwrap()),
+    )));
+
+    blocks.push(json!({ "type": "divider" }));
+
+    blocks.push(mrkdwn("*Your Hackagotchi*"));
+
+    for gotchi in hs.gotchis.iter() {
+        blocks.push(mrkdwn(&format!("{}*", gotchi.name)));
+    }
+    
+    blocks.push(json!({ "type": "divider" })); 
+
+    json!({ "blocks": blocks })
+}
+
+macro_rules! hacksteader_opening_blurb { ( $hackstead_cost:expr ) => { format!(
+r#"
+*Your Own Hackagotchi Homestead!*
+
+:corn: Grow your own Farmables which make Hackagotchi more powerful!
+:sparkling_heart: Earn passive income by collecting adorable Hackagotchi!
+:money_with_wings: Buy, sell and trade Farmables and Hackagotchi at an open auction!
+
+Hacksteading costs *{} GP*.
+As a Hacksteader, you'll have a plot of land on which to grow your own Farmables, which can be fed to
+Hackagotchi to make them more powerful. More powerful Hackagotchi generate more passive income!
+You can also buy, sell, and trade Farmables and Hackagotchi on an open auction space.
+"#,
+$hackstead_cost
+) } }
+
+fn render_hackstead_explanation() -> Value {
+    json!(
+        {
+            "text": hacksteader_opening_blurb!(*HOMESTEAD_PRICE),
+            "attachments": [ {
+                "text": "Monopolize on Adorableness?",
+                "fallback": "You are unable to homestead at the moment.",
+                "callback_id": "homestead",
+                "attachment_type": "default",
+                "actions": [ {
+                    "name": "homestead_confirm",
+                    "text": "Hack Yeah!",
+                    "style": "danger",
+                    "type": "button",
+                    "value": "confirmed",
+                    "confirm": {
+                        "title": "Do you have what it takes",
+                        "text": "to be a Hackagotchi Homesteader?",
+                        "ok_text": "LET'S HOMESTEAD, FRED!",
+                        "dismiss_text": "I'm short on GP"
+                    }
+                } ]
+            } ]
+        }
+    )
+}
+
+/// Returns Slack JSON displaying someone's hackstead if they're
+/// registered, if not, this command will greet them with an explanation
+/// of what hacksteading is and how they can get a hackstead of their own.
+fn render_hacksteader_greeting(hacksteader: Option<Hacksteader>) -> Value {
+    match hacksteader {
+        Some(hs) => render_hackstead(&hs),
+        None => render_hackstead_explanation(),
+    }
+}
 
 #[post("/homestead", data = "<slash_command>")]
 async fn homestead<'a>(
     slash_command: LenientForm<SlashCommand>,
-) -> Result<Json<Value>, &'static str> {
-    use rusoto_dynamodb::{DynamoDb, GetItemInput};
-
+) -> Json<Value> {
     println!("{:#?}", slash_command);
 
-    let db = dyn_db();
-    let hacksteader = db
-        .get_item(GetItemInput {
-            key: hacksteader::HacksteaderProfile::empty_item(slash_command.user_id.clone()),
-            table_name: hacksteader::TABLE_NAME.to_string(),
-            ..Default::default()
-        })
-        .await
-        .map_err(|_| "couldn't reach database")?
-        .item
-        .as_ref()
-        .map(hacksteader::HacksteaderProfile::from_item);
-
-    if let Some(fetched_hacksteader) = hacksteader {
-        if let Some(parsed_hacksteader) = fetched_hacksteader {
-            Ok(Json(json!({
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": format!("{}", parsed_hacksteader),
-                    },
-                    {
-                        "type": "divider",
-                    },
-                ]
-            }))
-        } else {
-            Err("This is real bad; we found you in the database but couldn't parse you")
-        }
-    } else {
-        Ok(Json(json!(
-            {
-                "text": hacksteader_opening_blurb!(*HOMESTEAD_PRICE),
-                "attachments": [ {
-                    "text": "Monopolize on Adorableness?",
-                    "fallback": "You are unable to homestead at the moment.",
-                    "callback_id": "homestead",
-                    "attachment_type": "default",
-                    "actions": [ {
-                        "name": "homestead_confirm",
-                        "text": "Hack Yeah!",
-                        "style": "danger",
-                        "type": "button",
-                        "value": "confirmed",
-                        "confirm": {
-                            "title": "Do you have what it takes",
-                            "text": "to be a Hackagotchi Homesteader?",
-                            "ok_text": "LET'S HOMESTEAD, FRED!",
-                            "dismiss_text": "I'm short on GP"
-                        }
-                    } ]
-                } ]
-            }
-        )))
-    }
+    let hs = Hacksteader::from_db(&dyn_db(), slash_command.user_id.clone()).await;
+    Json(render_hacksteader_greeting(hs))
 }
 
 #[allow(dead_code)]
@@ -129,9 +162,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<String,
             .await
             .map_err(|_| "couldn't send Banker invoice DM".to_string())?;
 
-            Ok(format!(
-                "Check your DMs from Banker for the homesteading invoice!"
-            ))
+            Ok("Check your DMs from Banker for the homesteading invoice!".into())
         }
         _ => Ok("huh?".into()),
     }
@@ -165,21 +196,12 @@ async fn event(e: Json<Event>) -> Result<(), String> {
     if let Some(paid_invoice) = serde_json::from_value::<ThreadedReply>(event)
         .ok()
         .and_then(banker::parse_paid_invoice)
+        .filter(|pi| pi.invoicer == *ID)
     {
-        use rusoto_dynamodb::{DynamoDb, PutItemInput};
-
-        if paid_invoice.invoicer == *ID {
-            println!("{} just paid an invoice", paid_invoice.invoicee);
-            let hs = hacksteader::HacksteaderProfile::new(paid_invoice.invoicee);
-            let db = dyn_db();
-            db.put_item(PutItemInput {
-                item: hs.item(),
-                table_name: hacksteader::TABLE_NAME.to_string(),
-                ..Default::default()
-            })
+        println!("{} just paid an invoice", paid_invoice.invoicee);
+        Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee)
             .await
             .map_err(|_| "Couldn't put you in the hacksteader database!")?;
-        }
     }
 
     Ok(())
