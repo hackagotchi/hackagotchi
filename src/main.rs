@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 mod banker;
 mod hacksteader;
 
-use hacksteader::Hacksteader;
+use hacksteader::{Gotchi, Hacksteader};
 
 fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
@@ -62,7 +62,7 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
     blocks.push(mrkdwn("*Your Hackagotchi*"));
 
     for gotchi in hs.gotchis.iter() {
-        blocks.push(mrkdwn(&format!("{}*", gotchi.name)));
+        blocks.push(mrkdwn(&format!("*{}*", gotchi.name)));
     }
     
     blocks.push(json!({ "type": "divider" })); 
@@ -182,8 +182,9 @@ struct Event {
     event: serde_json::Value,
 }
 #[derive(serde::Deserialize, Debug)]
-pub struct ThreadedReply {
-    user: String,
+pub struct Reply {
+    #[serde(rename = "user")]
+    user_id: String,
     channel: String,
     text: String,
 }
@@ -193,8 +194,10 @@ async fn event(e: Json<Event>) -> Result<(), String> {
     let Event { event } = (*e).clone();
     println!("{:#?}", event);
 
-    if let Some(paid_invoice) = serde_json::from_value::<ThreadedReply>(event)
-        .ok()
+    let r = serde_json::from_value::<Reply>(event).ok();
+
+    if let Some(paid_invoice) = r
+        .as_ref()
         .and_then(banker::parse_paid_invoice)
         .filter(|pi| pi.invoicer == *ID)
     {
@@ -202,6 +205,15 @@ async fn event(e: Json<Event>) -> Result<(), String> {
         Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee)
             .await
             .map_err(|_| "Couldn't put you in the hacksteader database!")?;
+    }
+
+    if let Some(Reply { user_id, text, .. }) = r.as_ref().filter(|r| r.text.contains("give")) {
+        println!("soem reply found");
+        if text.contains("adorpheus") {
+            Hacksteader::add_gotchi(&dyn_db(), user_id.into(), Gotchi { name: "adorpheus".into(), id: "7".into() })
+                .await
+                .map_err(|_| "hacksteader database problem")?;
+        }
     }
 
     Ok(())

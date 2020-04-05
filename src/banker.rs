@@ -1,4 +1,4 @@
-use super::{ThreadedReply, TOKEN};
+use super::{Reply, TOKEN};
 use regex::Regex;
 use std::env::var;
 
@@ -19,8 +19,8 @@ lazy_static::lazy_static! {
 
 /// Takes a threaded reply, returns `Some` if that threaded reply contains
 /// an invoice payment confirmation message
-pub fn parse_paid_invoice(msg: ThreadedReply) -> Option<PaidInvoice> {
-    if msg.channel == *CHAT_ID && msg.user == *ID {
+pub fn parse_paid_invoice(msg: &Reply) -> Option<PaidInvoice> {
+    if msg.channel == *CHAT_ID && msg.user_id == *ID {
         let caps = dbg!(PAID_INVOICE_MSG_REGEX.captures(&msg.text))?;
         return Some(PaidInvoice {
             invoicee: caps.get(1)?.as_str().to_string(),

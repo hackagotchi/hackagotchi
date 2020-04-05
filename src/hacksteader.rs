@@ -1,5 +1,5 @@
 use humantime::{format_rfc3339, parse_rfc3339};
-use rusoto_dynamodb::{AttributeValue, DynamoDbClient, DynamoDb};
+use rusoto_dynamodb::{AttributeValue, DynamoDbClient, DynamoDb, PutItemError};
 use rusoto_core::RusotoError;
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -15,7 +15,7 @@ pub struct Hacksteader {
     pub gotchis: Vec<Gotchi>,
 }
 impl Hacksteader {
-    pub async fn new_in_db(db: &DynamoDbClient, user_id: String) -> Result<(), RusotoError<rusoto_dynamodb::PutItemError>> {
+    pub async fn new_in_db(db: &DynamoDbClient, user_id: String) -> Result<(), RusotoError<PutItemError>> {
         // just give them a profile for now
         db.put_item(rusoto_dynamodb::PutItemInput {
             item: HacksteaderProfile::new().item(user_id),
@@ -25,6 +25,17 @@ impl Hacksteader {
         .await
         .map(|_| ())
     }
+
+    pub async fn add_gotchi(db: &DynamoDbClient, user_id: String, gotchi: Gotchi) -> Result<(), RusotoError<PutItemError>> {
+        db.put_item(rusoto_dynamodb::PutItemInput {
+            item: gotchi.item(user_id),
+            table_name: TABLE_NAME.to_string(),
+            ..Default::default()
+        })
+        .await
+        .map(|_| ())
+    }
+
     pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Option<Self> {
         let query = db.query(rusoto_dynamodb::QueryInput {
             table_name: TABLE_NAME.to_string(),
