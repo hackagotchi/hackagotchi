@@ -3,36 +3,36 @@
     "UTZBECLA2",
     "UN971L2UQ"
   ],
-  "archetypes": {
-    "adorpheus": {
-      "display_name": "Adorpheus",
+  "archetypes": [
+    {
+      "name": "Adorpheus",
       "kind": {
         "Gotchi": {
           "power": 3
         }
       }
     },
-    "gempheus": {
-      "display_name": "Gempheus",
+    {
+      "name": "Gempheus",
       "kind": {
         "Gotchi": {
           "power": 3
         }
       }
     },
-    "hackpheus": {
-      "display_name": "Hackpheus",
+    {
+      "name": "Hackpheus",
       "kind": {
         "Gotchi": {
           "power": 3
         }
       }
     },
-    "seed": {
-      "display_name": "Seed",
+    {
+      "name": "Seed",
       "kind": {
         "Seed": {}
       }
     }
-  }
+  ]
 }
