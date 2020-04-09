@@ -6,3 +6,5 @@
 .env
 
 Cargo.lock
+
+img/

@@ -18,6 +18,7 @@ fn dyn_db() -> DynamoDbClient {
 lazy_static::lazy_static! {
     pub static ref TOKEN: String = std::env::var("TOKEN").unwrap();
     pub static ref ID: String = std::env::var("ID").unwrap();
+    pub static ref URL: String = std::env::var("URL").unwrap();
     pub static ref HOMESTEAD_PRICE: usize = std::env::var("HOMESTEAD_PRICE").unwrap().parse().unwrap();
 }
 
@@ -39,33 +40,78 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
     use humantime::format_duration;
     use std::time::SystemTime;
 
-    fn mrkdwn(txt: &str) -> Value {
+    fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
         json!({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": txt,
-            }
+            "type": "mrkdwn",
+            "text": txt.to_string(),
+        })
+    }
+    fn comment<S: ToString>(txt: S) -> Value {
+        json!({
+            "type": "context",
+            "elements": [
+                mrkdwn(txt)
+            ]
         })
     }
 
     let mut blocks: Vec<Value> = Vec::new();
-    
-    blocks.push(mrkdwn(&format!(
-        "*Hacksteader <@{}>*\n joined {} ago (roughly)",
-        hs.user_id,
+
+    blocks.push(json!({
+        "type": "section",
+        "text": mrkdwn(format!("*_<@{}>'s Hackstead_*", hs.user_id)),
+    }));
+
+    blocks.push(comment(format!(
+        "founded {} ago (roughly)",
         format_duration(SystemTime::now().duration_since(hs.profile.joined).unwrap()),
     )));
 
     blocks.push(json!({ "type": "divider" }));
 
-    blocks.push(mrkdwn("*Your Hackagotchi*"));
+    if hs.gotchis.len() > 0 {
+        blocks.push(json!({
+            "type": "section",
+            "text": mrkdwn(match hs.gotchis.len() {
+                1 => "*Your Hackagotchi*".into(),
+                _ => format!("*Your {} Hackagotchi*", hs.gotchis.len())
+            }),
+        }));
 
-    for gotchi in hs.gotchis.iter() {
-        blocks.push(mrkdwn(&format!("*{}*", gotchi.name)));
+        for gotchi in hs.gotchis.iter() {
+            blocks.push(json!({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "image",
+                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
+                        "alt_text": "hackagotchi img",
+                    },
+                    mrkdwn(format!("_{} ({} power)_", gotchi.name, gotchi.power))
+                ]
+            }));
+        }
+
+        blocks.push(json!({
+            "type": "section",
+            "text": mrkdwn(format!(
+                "Total power: *{}*",
+                hs.gotchis.iter().map(|g| g.power).sum::<usize>()
+            ))
+        }));
+        blocks.push(comment(
+            "The amount of power you have is equivalent to the \
+                            amount of GP you'll get at the next Harvest. This \
+                            number is the sum of the power of all of your Hackagotchi.",
+        ));
     }
-    
-    blocks.push(json!({ "type": "divider" })); 
+
+    blocks.push(json!({ "type": "divider" }));
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!( { "blocks": blocks.clone() })).unwrap()
+    );
 
     json!({ "blocks": blocks })
 }
@@ -124,9 +170,7 @@ fn render_hacksteader_greeting(hacksteader: Option<Hacksteader>) -> Value {
 }
 
 #[post("/homestead", data = "<slash_command>")]
-async fn homestead<'a>(
-    slash_command: LenientForm<SlashCommand>,
-) -> Json<Value> {
+async fn homestead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     println!("{:#?}", slash_command);
 
     let hs = Hacksteader::from_db(&dyn_db(), slash_command.user_id.clone()).await;
@@ -207,25 +251,40 @@ async fn event(e: Json<Event>) -> Result<(), String> {
             .map_err(|_| "Couldn't put you in the hacksteader database!")?;
     }
 
-    if let Some(Reply { user_id, text, .. }) = r.as_ref().filter(|r| r.text.contains("give")) {
-        println!("soem reply found");
-        if text.contains("adorpheus") {
-            Hacksteader::add_gotchi(&dyn_db(), user_id.into(), Gotchi { name: "adorpheus".into(), id: "7".into() })
+    lazy_static::lazy_static! {
+        static ref GIVE_GOTCHI_REGEX: regex::Regex = regex::Regex::new(
+            "<@([A-z|0-9]+)> give (<@([A-z|0-9]+)> )?([A-z]+)"
+        ).unwrap();
+    }
+
+    if let Some(captures) = r.as_ref().and_then(|r| GIVE_GOTCHI_REGEX.captures(&r.text)) {
+        dbg!(captures);
+        return Ok(());
+        /*
+        println!("some reply found");
+        if text.contains("Adorpheus") {
+            Hacksteader::add_gotchi(&dyn_db(), user_id.into(), Gotchi::new("Adorpheus".into(), 3))
                 .await
                 .map_err(|_| "hacksteader database problem")?;
-        }
+        }*/
     }
 
     Ok(())
 }
 
 fn main() {
+    use rocket_contrib::serve::StaticFiles;
+
     dotenv::dotenv().ok();
 
     rocket::ignite()
         .mount(
             "/gotchi",
             routes![homestead, action_endpoint, challenge, event],
+        )
+        .mount(
+            "/gotchi/img",
+            StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
         )
         .launch()
         .expect("launch fail");

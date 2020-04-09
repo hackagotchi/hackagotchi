@@ -1,0 +1,35 @@
+{
+	"special_users": [ "UTZBECLA2", "UN971L2UQ" ],
+	"archetypes": {
+		"adorpheus": {
+			"name": "Adorpheus",
+			"kind": {
+				"Gotchi": {
+					"power": 3
+				}
+			}
+		},
+		"gempheus": {
+			"name": "Gempheus",
+			"kind": {
+				"Gotchi": {
+					"power": 3
+				}
+			}
+		},
+		"hackpheus": {
+			"name": "Hackpheus",
+			"kind": {
+				"Gotchi": {
+					"power": 3
+				}
+			}
+		},
+		"seed": {
+			"name": "Seed",
+			"kind": {
+				"Seed": {}
+			}
+		}
+	}
+}
