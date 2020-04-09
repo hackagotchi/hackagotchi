@@ -13,17 +13,27 @@ pub struct Config {
     special_users: Vec<String>,
     archetypes: HashMap<String, Archetype>,
 }
+
+#[derive(serde::Deserialize)]
+pub struct GotchiArchetype {
+    pub power: usize,
+}
+#[derive(serde::Deserialize)]
+pub struct SeedArchetype;
+#[derive(serde::Deserialize)]
+pub struct KeepsakeArchetype;
+
 #[derive(serde::Deserialize)]
 pub enum ArchetypeKind {
-    Gotchi { power: usize },
-    Seed,
-    Item,
+    Gotchi(GotchiArchetype),
+    Seed(SeedArchetype),
+    Keepsake(KeepsakeArchetype),
 }
+#[derive(serde::Deserialize)]
 pub struct Archetype {
-    name: String,
+    pub display_name: String,
     kind: ArchetypeKind,
 }
-struct ArchetypeHandle(usize);
 
 lazy_static::lazy_static! {
     pub static ref CONFIG: Config = {
@@ -39,7 +49,9 @@ lazy_static::lazy_static! {
 pub struct Hacksteader {
     pub user_id: String,
     pub profile: HacksteaderProfile,
-    pub gotchis: Vec<Gotchi>,
+    pub gotchis: Vec<Possessed<Gotchi>>,
+    pub seeds: Vec<Possessed<Seed>>,
+    pub keepsakes: Vec<Possessed<Keepsake>>,
 }
 impl Hacksteader {
     pub async fn new_in_db(
@@ -56,13 +68,13 @@ impl Hacksteader {
         .map(|_| ())
     }
 
-    pub async fn add_gotchi(
+    pub async fn possess_new<P: Possessable>(
         db: &DynamoDbClient,
         user_id: String,
-        gotchi: Gotchi,
+        possession: Possessed<P>,
     ) -> Result<(), RusotoError<PutItemError>> {
         db.put_item(rusoto_dynamodb::PutItemInput {
-            item: gotchi.item(user_id),
+            item: possession.item(user_id),
             table_name: TABLE_NAME.to_string(),
             ..Default::default()
         })
@@ -93,29 +105,79 @@ impl Hacksteader {
 
         let mut profile = None;
         let mut gotchis = Vec::new();
+        let mut seeds = Vec::new();
+        let mut keepsakes = Vec::new();
 
         for item in items.iter() {
             (|| -> Option<()> {
                 let sk = item.get("sk")?.s.as_ref()?;
                 match sk.chars().next()? {
                     'P' => profile = Some(HacksteaderProfile::from_item(item)?),
-                    'G' => gotchis.push(Gotchi::from_item(item)?),
+                    'G' => gotchis.push(Possessed::from_item(item)?),
+                    'S' => seeds.push(Possessed::from_item(item)?),
+                    'K' => keepsakes.push(Possessed::from_item(item)?),
                     _ => unreachable!(),
                 }
                 Some(())
             })();
         }
+
         Some(Hacksteader {
             profile: profile?,
-            gotchis,
             user_id,
+            gotchis,
+            seeds,
+            keepsakes,
         })
     }
 }
 
+pub trait Possessable: Sized {
+    /// The archetype that corresponds to this Possessable
+    type A;
+
+    /// A char used in the ids that this Possessable serializes into in the database.
+    const SIGN: char;
+
+    fn new(archetype_handle: &str) -> Self;
+    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A>;
+    fn from_item(item: &Item) -> Option<Self>;
+    fn write_item(&self, item: &mut Item);
+}
+
+#[derive(Default)]
 pub struct Gotchi {
     gp_harvested: usize,
 }
+impl Possessable for Gotchi {
+    type A = GotchiArchetype;
+    const SIGN: char = 'G';
+    fn new(_archetype_handle: &str) -> Self {
+        Default::default()
+    }
+    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
+        match a {
+            ArchetypeKind::Gotchi(ga) => Some(ga),
+            _ => None,
+        }
+    }
+    fn from_item(item: &Item) -> Option<Self> {
+        Some(Gotchi {
+            gp_harvested: item.get("gp_harvested")?.n.as_ref()?.parse().ok()?,
+        })
+    }
+    fn write_item(&self, item: &mut Item) {
+        item.insert(
+            "gp_harvested".to_string(),
+            AttributeValue {
+                n: Some(self.gp_harvested.to_string()),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+#[derive(Default)]
 pub struct Seed {
     pedigree: Vec<SeedGrower>,
 }
@@ -123,103 +185,123 @@ pub struct SeedGrower {
     id: String,
     generations: usize,
 }
-
-pub enum PossessionKind {
-    Gotchi(Gotchi),
-    Seed(Seed),
-    Item,
-}
-impl PossessionKind {
-    fn sign(&self) -> char {
-        match self {
-            PossessionKind::Gotchi(_) => 'G',
-            PossessionKind::Seed(_) => 'S',
-            PossessionKind::Item => 'I',
+impl Possessable for Seed {
+    type A = SeedArchetype;
+    const SIGN: char = 'G';
+    fn new(_archetype_handle: &str) -> Self {
+        Default::default()
+    }
+    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
+        match a {
+            ArchetypeKind::Seed(sa) => Some(sa),
+            _ => None,
         }
     }
-    fn from_sign_item(sign: char, item: &Item) -> Option<Self> {
-        Some(match sign {
-            'G' => PossessionKind::Gotchi(Gotchi {
-                gp_harvested: item.get("gp_harvested")?.n.as_ref()?.parse().ok()?,
-            }),
-            'S' => PossessionKind::Seed(Seed {
-                pedigree: item
-                    .get("pedigree")?
-                    .l?
-                    .filter_map(|v| {
-                        Some(SeedGrower {
-                            id: v.get("id")?.s?.clone(),
-                            generations: v.get("generations")?.n.as_ref()?.parse().ok()?,
-                        })
+    fn from_item(item: &Item) -> Option<Self> {
+        Some(Seed {
+            pedigree: item
+                .get("pedigree")?
+                .l
+                .as_ref()?
+                .iter()
+                .filter_map(|v| {
+                    let m = v.m.as_ref()?;
+                    Some(SeedGrower {
+                        id: m.get("id")?.s.as_ref()?.clone(),
+                        generations: m.get("generations")?.n.as_ref()?.parse().ok()?,
                     })
-                    .collect(),
-            }),
-            'I' => PossessionKind::Item,
-            _ => unreachable!(),
+                })
+                .collect(),
         })
     }
     fn write_item(&self, item: &mut Item) {
-        match self {
-            PossessionKind::Gotchi(Gotchi { gp_harvested }) => {
-                item.insert(
-                    "gp_harvested",
-                    AttributeValue {
-                        n: Some(gp_harvested.to_string()),
-                        ..Default::default()
-                    },
-                );
-            }
-            PossessionKind::Seed(Seed { pedigree }) => {
-                item.insert(
-                    "pedigree",
-                    AttributeValue {
-                        l: Some(
-                            pedigree
-                                .map(|sg| AttributeValue {
-                                    m: [
-                                        (
-                                            "id".to_string(),
-                                            AttributeValue {
-                                                s: Some(sg.id.clone()),
-                                                ..Default::default()
-                                            },
-                                        ),
-                                        (
-                                            "generations".to_string(),
-                                            AttributeValue {
-                                                n: Some(sg.generations.to_string()),
-                                                ..Default::default()
-                                            },
-                                        ),
-                                    ]
-                                    .iter()
-                                    .cloned()
-                                    .collect(),
-                                    ..Default::default()
-                                })
-                                .collect(),
-                        ),
-                        ..Default::default()
-                    },
-                );
-            }
-        }
+        item.insert(
+            "pedigree".to_string(),
+            AttributeValue {
+                l: Some(
+                    self.pedigree
+                        .iter()
+                        .map(|sg| AttributeValue {
+                            m: Some([
+                                (
+                                    "id".to_string(),
+                                    AttributeValue {
+                                        s: Some(sg.id.clone()),
+                                        ..Default::default()
+                                    },
+                                ),
+                                (
+                                    "generations".to_string(),
+                                    AttributeValue {
+                                        n: Some(sg.generations.to_string()),
+                                        ..Default::default()
+                                    },
+                                ),
+                            ]
+                            .iter()
+                            .cloned()
+                            .collect()),
+                            ..Default::default()
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            },
+        );
     }
 }
-struct Possession {
-    kind: PossessionKind,
-    arch: ArchetypeHandle,
+
+pub struct Keepsake;
+impl Possessable for Keepsake {
+    type A = KeepsakeArchetype;
+    const SIGN: char = 'K';
+    fn new(_archetype_handle: &str) -> Self {
+        Keepsake
+    }
+    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
+        match a {
+            ArchetypeKind::Keepsake(ka) => Some(ka),
+            _ => None,
+        }
+    }
+    fn from_item(item: &Item) -> Option<Self> {
+        Some(Keepsake)
+    }
+    fn write_item(&self, item: &mut Item) {}
+}
+
+pub struct Possessed<P: Possessable> {
+    inner: P,
+    pub archetype_handle: String,
     owner_history: Vec<String>,
     count: usize,
 }
-impl Possession {
-    pub fn new(kind: PossessionKind, arch: ArchetypeHandle) -> Self {
+
+impl<P: Possessable> std::ops::Deref for Possessed<P> {
+    type Target = Archetype;
+
+    fn deref(&self) -> &Self::Target {
+        self.archetype()
+    }
+}
+
+impl<P: Possessable> Possessed<P> {
+    pub fn new(archetype_handle: String) -> Self {
         Self {
-            kind,
-            arch,
+            inner: P::new(&archetype_handle),
+            archetype_handle,
             count: 1,
             owner_history: Vec::new(),
         }
+    }
+
+    fn archetype(&self) -> &Archetype {
+        CONFIG.archetypes.get(&self.archetype_handle).expect("invalid archetype handle")
+    }
+
+    pub fn inner_arch(&self) -> &P::A {
+        P::archetype_kind(&self.archetype().kind)
+            .unwrap_or_else(|| panic!("had '{}' archetype handle, got wrong ArchetypeKind"))
     }
 
     fn item(&self, slack_id: String) -> Item {
@@ -235,10 +317,10 @@ impl Possession {
             "sk".to_string(),
             AttributeValue {
                 s: Some({
-                    let mut sk = String::with_capacity(self.name.len() + 2);
-                    sk.push(self.kind.sign());
+                    let mut sk = String::with_capacity(self.archetype_handle.len() + 2);
+                    sk.push(P::SIGN);
                     sk.push('#');
-                    sk.push_str(&self.name);
+                    sk.push_str(&self.archetype_handle);
                     sk
                 }),
                 ..Default::default()
@@ -258,18 +340,23 @@ impl Possession {
                 ..Default::default()
             },
         );
-        self.kind.write_item(&mut m);
+        self.inner.write_item(&mut m);
         m
     }
 
     pub fn from_item(item: &Item) -> Option<Self> {
         let mut sk_parts = item.get("sk")?.s.as_ref()?.split("#");
-        let sign_section_chars = sk_parts.next()?.chars();
+        let mut sign_section_chars = sk_parts.next()?.chars();
+
+        // first section should have one char, that char should be the sign
+        // of this possessable.
+        assert_eq!(sign_section_chars.next(), Some(P::SIGN));
+        assert_eq!(sign_section_chars.next(), None);
 
         Some(Self {
-            kind: PossessionKind::from_sign_item(sign_section_chars.next(), item),
-            name: sk_parts.next()?.to_string(),
-            owner_history: item.get("owner_history")?.ss?.clone(),
+            inner: P::from_item(item)?,
+            archetype_handle: sk_parts.next()?.to_string(),
+            owner_history: item.get("owner_history")?.ss.as_ref()?.clone(),
             count: item.get("count")?.n.as_ref()?.parse().ok()?,
         })
     }

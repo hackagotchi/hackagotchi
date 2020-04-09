@@ -56,14 +56,14 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
     }
 
     let mut blocks: Vec<Value> = Vec::new();
-
+    
     blocks.push(json!({
         "type": "section",
         "text": mrkdwn(format!("*_<@{}>'s Hackstead_*", hs.user_id)),
     }));
 
     blocks.push(comment(format!(
-        "founded {} ago (roughly)",
+        "founded {} ago (roughly)", 
         format_duration(SystemTime::now().duration_since(hs.profile.joined).unwrap()),
     )));
 
@@ -84,10 +84,10 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
                 "elements": [
                     {
                         "type": "image",
-                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
+                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.archetype_handle),
                         "alt_text": "hackagotchi img",
                     },
-                    mrkdwn(format!("_{} ({} power)_", gotchi.name, gotchi.power))
+                    mrkdwn(format!("_{} ({} power)_", gotchi.display_name, gotchi.inner_arch().power))
                 ]
             }));
         }
@@ -96,22 +96,17 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
             "type": "section",
             "text": mrkdwn(format!(
                 "Total power: *{}*",
-                hs.gotchis.iter().map(|g| g.power).sum::<usize>()
+                hs.gotchis.iter().map(|g| g.inner_arch().power).sum::<usize>()
             ))
         }));
-        blocks.push(comment(
-            "The amount of power you have is equivalent to the \
+        blocks.push(comment("The amount of power you have is equivalent to the \
                             amount of GP you'll get at the next Harvest. This \
-                            number is the sum of the power of all of your Hackagotchi.",
-        ));
+                            number is the sum of the power of all of your Hackagotchi."));
     }
 
-    blocks.push(json!({ "type": "divider" }));
+    blocks.push(json!({ "type": "divider" })); 
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!( { "blocks": blocks.clone() })).unwrap()
-    );
+    println!("{}", serde_json::to_string_pretty(&json!( { "blocks": blocks.clone() })).unwrap());
 
     json!({ "blocks": blocks })
 }
@@ -170,7 +165,9 @@ fn render_hacksteader_greeting(hacksteader: Option<Hacksteader>) -> Value {
 }
 
 #[post("/homestead", data = "<slash_command>")]
-async fn homestead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
+async fn homestead<'a>(
+    slash_command: LenientForm<SlashCommand>,
+) -> Json<Value> {
     println!("{:#?}", slash_command);
 
     let hs = Hacksteader::from_db(&dyn_db(), slash_command.user_id.clone()).await;
@@ -282,10 +279,7 @@ fn main() {
             "/gotchi",
             routes![homestead, action_endpoint, challenge, event],
         )
-        .mount(
-            "/gotchi/img",
-            StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
-        )
+        .mount("/gotchi/img", StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")))
         .launch()
         .expect("launch fail");
 }
