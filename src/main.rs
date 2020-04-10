@@ -84,7 +84,7 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
                 "elements": [
                     {
                         "type": "image",
-                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.archetype_handle),
+                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
                         "alt_text": "hackagotchi img",
                     },
                     mrkdwn(format!("_{} ({} power)_", gotchi.name, gotchi.inner.power))
@@ -260,22 +260,29 @@ async fn event(e: Json<Event>) -> Result<(), String> {
     }
 
     if let Some((receiver, archetype_handle)) = r
-            .filter(|r| CONFIG.special_users.contains(&r.user_id))
-            .as_ref()
-            .and_then(|r| {
-                let c = SPAWN_POSSESSION_REGEX.captures(&r.text)?;
-                let _spawner = c.get(1).filter(|x| x.as_str() == &*ID)?;
-                let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
-                let possession_name = c.get(4)?.as_str();
-                let archetype_handle = CONFIG.archetypes.iter().position(|x| x.name == possession_name)?;
-                Some((receiver, archetype_handle))
-            })
+        .filter(|r| CONFIG.special_users.contains(&r.user_id))
+        .as_ref()
+        .and_then(|r| {
+            let c = SPAWN_POSSESSION_REGEX.captures(&r.text)?;
+            let _spawner = c.get(1).filter(|x| x.as_str() == &*ID)?;
+            let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
+            let possession_name = c.get(4)?.as_str();
+            let archetype_handle = CONFIG
+                .archetypes
+                .iter()
+                .position(|x| x.name == possession_name)?;
+            Some((receiver, archetype_handle))
+        })
     {
         println!("some reply found");
 
-        Hacksteader::give_possession_from_archetype(&dyn_db(), receiver.to_string(), archetype_handle)
-            .await
-            .map_err(|_| "hacksteader database problem")?;
+        Hacksteader::give_possession_from_archetype(
+            &dyn_db(),
+            receiver.to_string(),
+            archetype_handle,
+        )
+        .await
+        .map_err(|_| "hacksteader database problem")?;
 
         return Ok(());
     }
