@@ -10,30 +10,30 @@ pub const TABLE_NAME: &'static str = "hackagotchi";
 
 #[derive(serde::Deserialize)]
 pub struct Config {
-    special_users: Vec<String>,
-    archetypes: Vec<Archetype>,
+    pub special_users: Vec<String>,
+    pub archetypes: Vec<Archetype>,
 }
 pub type ArchetypeHandle = usize;
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct GotchiArchetype {
     pub power: usize,
 }
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct SeedArchetype;
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct KeepsakeArchetype;
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub enum ArchetypeKind {
     Gotchi(GotchiArchetype),
     Seed(SeedArchetype),
     Keepsake(KeepsakeArchetype),
 }
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct Archetype {
     pub name: String,
-    kind: ArchetypeKind,
+    pub kind: ArchetypeKind,
 }
 
 lazy_static::lazy_static! {
@@ -69,7 +69,29 @@ impl Hacksteader {
         .map(|_| ())
     }
 
-    pub async fn possess_new<P: Possessable>(
+    pub async fn give_possession_from_archetype(
+        db: &DynamoDbClient,
+        user_id: String,
+        ah: ArchetypeHandle,
+    ) -> Result<(), RusotoError<PutItemError>> {
+        // eventually you probably want to be dynamic over the type at runtime but this works for now
+        match CONFIG.archetypes.get(ah).expect("invalid archetype handle").kind {
+            ArchetypeKind::Gotchi(_) => {
+                let i = Possessed::<Gotchi>::new(ah, user_id.clone());
+                Self::give_possession(db, user_id, i).await
+            }
+            ArchetypeKind::Seed(_) => {
+                let i = Possessed::<Seed>::new(ah, user_id.clone());
+                Self::give_possession(db, user_id, i).await
+            }
+            ArchetypeKind::Keepsake(_) => {
+                let i = Possessed::<Keepsake>::new(ah, user_id.clone());
+                Self::give_possession(db, user_id, i).await
+            }
+        }
+    }
+
+    pub async fn give_possession<P: Possessable>(
         db: &DynamoDbClient,
         user_id: String,
         possession: Possessed<P>,
@@ -133,14 +155,14 @@ impl Hacksteader {
     }
 }
 
-pub trait Possessable: std::ops::Deref + Sized {
+pub trait Possessable: std::ops::Deref + std::fmt::Debug + Sized {
     /// The archetype that corresponds to this Possessable
     type A;
 
     /// A char used in the ids that this Possessable serializes into in the database.
     const SIGN: char;
 
-    fn new(archetype_handle: ArchetypeHandle) -> Self;
+    fn new(archetype_handle: ArchetypeHandle, owner_id: String) -> Self;
     fn archetype_handle(&self) -> ArchetypeHandle;
     fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A>;
     fn fill_from_item(&mut self, item: &Item) -> Option<()>;
@@ -166,7 +188,7 @@ macro_rules! archetype_deref {
     };
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Gotchi {
     archetype_handle: ArchetypeHandle,
     gp_harvested: usize,
@@ -175,7 +197,7 @@ archetype_deref!(Gotchi);
 impl Possessable for Gotchi {
     type A = GotchiArchetype;
     const SIGN: char = 'G';
-    fn new(archetype_handle: ArchetypeHandle) -> Self {
+    fn new(archetype_handle: ArchetypeHandle, _owner_id: String) -> Self {
         Self {
             archetype_handle,
             ..Default::default()
@@ -205,12 +227,13 @@ impl Possessable for Gotchi {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Seed {
     archetype_handle: ArchetypeHandle,
     pedigree: Vec<SeedGrower>,
 }
 archetype_deref!(Seed);
+#[derive(Default, Debug)]
 pub struct SeedGrower {
     id: String,
     generations: usize,
@@ -218,10 +241,10 @@ pub struct SeedGrower {
 impl Possessable for Seed {
     type A = SeedArchetype;
     const SIGN: char = 'G';
-    fn new(archetype_handle: ArchetypeHandle) -> Self {
+    fn new(archetype_handle: ArchetypeHandle, owner_id: String) -> Self {
         Self {
             archetype_handle,
-            ..Default::default()
+            pedigree: vec![SeedGrower { id: owner_id, generations: 0 }],
         }
     }
     fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
@@ -289,6 +312,7 @@ impl Possessable for Seed {
     }
 }
 
+#[derive(Debug)]
 pub struct Keepsake {
     archetype_handle: ArchetypeHandle,
 }
@@ -296,7 +320,7 @@ archetype_deref!(Keepsake);
 impl Possessable for Keepsake {
     type A = KeepsakeArchetype;
     const SIGN: char = 'K';
-    fn new(archetype_handle: ArchetypeHandle) -> Self {
+    fn new(archetype_handle: ArchetypeHandle, _owner: String) -> Self {
         Self { archetype_handle }
     }
     fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
@@ -311,9 +335,10 @@ impl Possessable for Keepsake {
     fn fill_from_item(&mut self, _item: &Item) -> Option<()> {
         Some(())
     }
-    fn write_item(&self, item: &mut Item) {}
+    fn write_item(&self, _item: &mut Item) {}
 }
 
+#[derive(Debug)]
 pub struct Possessed<P: Possessable> {
     pub inner: P,
     pub archetype_handle: ArchetypeHandle,
@@ -330,12 +355,12 @@ impl<P: Possessable> std::ops::Deref for Possessed<P> {
 }
 
 impl<P: Possessable> Possessed<P> {
-    pub fn new(archetype_handle: ArchetypeHandle) -> Self {
+    pub fn new(archetype_handle: ArchetypeHandle, owner_id: String) -> Self {
         Self {
-            inner: P::new(archetype_handle),
+            inner: P::new(archetype_handle, owner_id.clone()),
             archetype_handle,
             count: 1,
-            owner_history: Vec::new(),
+            owner_history: vec![owner_id],
         }
     }
 
@@ -399,10 +424,10 @@ impl<P: Possessable> Possessed<P> {
         assert_eq!(sign_section_chars.next(), Some(P::SIGN));
         assert_eq!(sign_section_chars.next(), None);
 
-        let display_name = sk_parts.next()?;
+        let _name = sk_parts.next()?;
         let archetype_handle = sk_parts.next()?.to_owned().parse().ok()?;
 
-        let mut inner = P::new(archetype_handle);
+        let mut inner = P::new(archetype_handle, item.get("pk")?.s.as_ref()?.to_string());
         inner.fill_from_item(item);
 
         Some(Self {

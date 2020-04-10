@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 mod banker;
 mod hacksteader;
 
-use hacksteader::{Gotchi, Hacksteader};
+use hacksteader::Hacksteader;
 
 fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
@@ -235,6 +235,8 @@ pub struct Reply {
 
 #[post("/event", format = "application/json", data = "<e>", rank = 1)]
 async fn event(e: Json<Event>) -> Result<(), String> {
+    use hacksteader::CONFIG;
+
     let Event { event } = (*e).clone();
     println!("{:#?}", event);
 
@@ -252,21 +254,30 @@ async fn event(e: Json<Event>) -> Result<(), String> {
     }
 
     lazy_static::lazy_static! {
-        static ref GIVE_GOTCHI_REGEX: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> give (<@([A-z|0-9]+)> )?([A-z]+)"
+        static ref SPAWN_POSSESSION_REGEX: regex::Regex = regex::Regex::new(
+            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?([A-z]+)"
         ).unwrap();
     }
 
-    if let Some(captures) = r.as_ref().and_then(|r| GIVE_GOTCHI_REGEX.captures(&r.text)) {
-        dbg!(captures);
-        return Ok(());
-        /*
+    if let Some((receiver, archetype_handle)) = r
+            .filter(|r| CONFIG.special_users.contains(&r.user_id))
+            .as_ref()
+            .and_then(|r| {
+                let c = SPAWN_POSSESSION_REGEX.captures(&r.text)?;
+                let _spawner = c.get(1).filter(|x| x.as_str() == &*ID)?;
+                let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
+                let possession_name = c.get(4)?.as_str();
+                let archetype_handle = CONFIG.archetypes.iter().position(|x| x.name == possession_name)?;
+                Some((receiver, archetype_handle))
+            })
+    {
         println!("some reply found");
-        if text.contains("Adorpheus") {
-            Hacksteader::add_gotchi(&dyn_db(), user_id.into(), Gotchi::new("Adorpheus".into(), 3))
-                .await
-                .map_err(|_| "hacksteader database problem")?;
-        }*/
+
+        Hacksteader::give_possession_from_archetype(&dyn_db(), receiver.to_string(), archetype_handle)
+            .await
+            .map_err(|_| "hacksteader database problem")?;
+
+        return Ok(());
     }
 
     Ok(())
