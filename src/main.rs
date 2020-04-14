@@ -3,13 +3,13 @@
 use rocket::request::LenientForm;
 use rocket::{post, routes, FromForm};
 use rocket_contrib::json::Json;
-use rusoto_dynamodb::DynamoDbClient;
+use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 
 mod banker;
 mod hacksteader;
 
-use hacksteader::Hacksteader;
+use hacksteader::{Gotchi, Hacksteader, Possessed};
 
 fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
@@ -36,24 +36,24 @@ struct SlashCommand {
     response_url: String,
 }
 
+fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
+    json!({
+        "type": "mrkdwn",
+        "text": txt.to_string(),
+    })
+}
+fn comment<S: ToString>(txt: S) -> Value {
+    json!({
+        "type": "context",
+        "elements": [
+            mrkdwn(txt)
+        ]
+    })
+}
+
 fn render_hackstead(hs: &Hacksteader) -> Value {
     use humantime::format_duration;
     use std::time::SystemTime;
-
-    fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
-        json!({
-            "type": "mrkdwn",
-            "text": txt.to_string(),
-        })
-    }
-    fn comment<S: ToString>(txt: S) -> Value {
-        json!({
-            "type": "context",
-            "elements": [
-                mrkdwn(txt)
-            ]
-        })
-    }
 
     let mut blocks: Vec<Value> = Vec::new();
 
@@ -80,29 +80,30 @@ fn render_hackstead(hs: &Hacksteader) -> Value {
 
         for gotchi in hs.gotchis.iter() {
             blocks.push(json!({
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "image",
-                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
-                        "alt_text": "hackagotchi img",
+                "type": "section",
+                "text": mrkdwn(format!("_:{0}: ({0}, {1} happiness)_", gotchi.name, gotchi.inner.base_happiness)),
+                "accessory": {
+                    "type": "button",
+                    "text": {
+                        "text": gotchi.inner.nickname,
+                        "type": "plain_text",
                     },
-                    mrkdwn(format!("_{} ({} power)_", gotchi.name, gotchi.inner.power))
-                ]
+                    "value": serde_json::to_string(&gotchi).unwrap(),
+                    "action_id": "gotchi_page",
+                }
             }));
         }
 
         blocks.push(json!({
             "type": "section",
             "text": mrkdwn(format!(
-                "Total power: *{}*",
-                hs.gotchis.iter().map(|g| g.inner.power).sum::<usize>()
+                "Total happiness: *{}*",
+                hs.gotchis.iter().map(|g| g.inner.base_happiness).sum::<usize>()
             ))
         }));
         blocks.push(comment(
-            "The amount of power you have is equivalent to the \
-                            amount of GP you'll get at the next Harvest. This \
-                            number is the sum of the power of all of your Hackagotchi.",
+            "The total happiness of all your gotchi is equivalent to the \
+             amount of GP you'll get at the next Harvest.",
         ));
     }
 
@@ -120,13 +121,13 @@ macro_rules! hacksteader_opening_blurb { ( $hackstead_cost:expr ) => { format!(
 r#"
 *Your Own Hackagotchi Homestead!*
 
-:corn: Grow your own Farmables which make Hackagotchi more powerful!
+:corn: Grow your own Farmables which make Hackagotchi happier!
 :sparkling_heart: Earn passive income by collecting adorable Hackagotchi!
 :money_with_wings: Buy, sell and trade Farmables and Hackagotchi at an open auction!
 
 Hacksteading costs *{} GP*.
 As a Hacksteader, you'll have a plot of land on which to grow your own Farmables, which can be fed to
-Hackagotchi to make them more powerful. More powerful Hackagotchi generate more passive income!
+Hackagotchi to make them happier. Happier Hackagotchi generate more passive income!
 You can also buy, sell, and trade Farmables and Hackagotchi on an open auction space.
 "#,
 $hackstead_cost
@@ -177,39 +178,278 @@ async fn homestead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> 
     Json(render_hacksteader_greeting(hs))
 }
 
-#[allow(dead_code)]
 #[derive(FromForm, Debug)]
 struct ActionData {
     payload: String,
 }
+#[derive(serde::Deserialize, Debug)]
+pub struct Interaction {
+    trigger_id: String,
+    actions: Vec<Action>,
+    user: User,
+    view: Option<View>,
+}
+#[derive(serde::Deserialize, Debug)]
+pub struct View {
+    private_metadata: String,
+}
+#[derive(serde::Deserialize, Debug)]
+pub struct User {
+    id: String,
+}
+#[derive(serde::Deserialize, Debug)]
+pub struct Action {
+    action_id: Option<String>,
+    name: Option<String>,
+    value: String,
+}
+
+async fn modal(
+    method: &str,
+    trigger_id: &str,
+    callback_id: &str,
+    title: &str,
+    private_metadata: &str,
+    blocks: Vec<Value>,
+    submit: Option<&str>,
+) -> Result<Value, String> {
+    let mut o = json!({
+        "trigger_id": trigger_id,
+        "view": {
+            "type": "modal",
+            "private_metadata": private_metadata,
+            "callback_id": callback_id,
+            "title": {
+                "type": "plain_text",
+                "text": title,
+            },
+            "blocks": blocks
+        }
+    });
+
+    if let Some(submit_msg) = submit {
+        o["view"].as_object_mut().unwrap().insert(
+            "submit".to_string(),
+            json!({
+                "type": "plain_text",
+                "text": submit_msg,
+            }),
+        );
+    }
+
+    let client = reqwest::Client::new();
+    client
+        .post(&format!("https://slack.com/api/views.{}", method))
+        .bearer_auth(&*TOKEN)
+        .json(&o)
+        .send()
+        .await
+        .map_err(|e| format!("couldn't open modal: {}", e))?;
+
+    println!("{}", serde_json::to_string_pretty(&o).unwrap());
+    Ok(o)
+}
+
+#[derive(rocket::Responder)]
+pub enum ActionResponse {
+    Json(Json<Value>),
+    Ok(()),
+}
 
 #[post("/interact", data = "<action_data>")]
-async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<String, String> {
-    let v: Value =
-        serde_json::from_str(&action_data.payload).map_err(|_| "bad data".to_string())?;
+async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionResponse, String> {
+    let v = serde_json::from_str::<Value>(&action_data.payload).unwrap();
+    println!("action data: {:#?}", v);
 
-    println!("{:#?}", v);
-
-    match v.get("callback_id") {
-        Some(&Value::String(ref s)) if s == "homestead" => {
-            let user_id = v
-                .get("user")
-                .and_then(|x| x.get("id").and_then(|x| x.as_str()))
-                .ok_or("no user".to_string())?;
-
-            banker::message(&format!(
-                "<@{}> invoice <@{}> {} for let's homestead, fred!",
-                *banker::ID,
-                user_id,
-                *HOMESTEAD_PRICE,
+    if let Some("view_submission") = v.get("type").and_then(|t| t.as_str()) {
+        println!("right type!");
+        let view = v.get("view").and_then(|view| {
+            Some((
+                serde_json::from_value::<View>(view.clone()).ok()?,
+                view.get("state").and_then(|s| s.get("values"))?,
+                serde_json::from_value::<User>(v.get("user")?.clone()).ok()?,
             ))
-            .await
-            .map_err(|_| "couldn't send Banker invoice DM".to_string())?;
+        });
+        if let Some((view, values, user)) = view {
+            println!("view state values: {:#?}", values);
+            if let Some(Value::String(nickname)) = values
+                .get("gotchi_nickname_input")
+                .and_then(|i| i.get("gotchi_nickname_set"))
+                .and_then(|s| s.get("value"))
+            {
+                let db = dyn_db();
+                db.update_item(rusoto_dynamodb::UpdateItemInput {
+                    table_name: hacksteader::TABLE_NAME.to_string(),
+                    key: Possessed::<Gotchi>::empty_item_from_parts(
+                        view.private_metadata,
+                        user.id.clone(),
+                    ),
+                    update_expression: Some("SET nickname = :new_name".to_string()),
+                    expression_attribute_values: Some(
+                        [(
+                            ":new_name".to_string(),
+                            AttributeValue {
+                                s: Some(nickname.clone()),
+                                ..Default::default()
+                            },
+                        )]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| format!("Couldn't store nickname change: {}", e))?;
 
-            Ok("Check your DMs from Banker for the homesteading invoice!".into())
+                return Ok(ActionResponse::Ok(()));
+            }
         }
-        _ => Ok("huh?".into()),
     }
+
+    let mut i: Interaction =
+        serde_json::from_str(&action_data.payload).map_err(|e| format!("bad data: {}", e))?;
+
+    println!("{:#?}", i);
+
+    Ok(ActionResponse::Json(Json(if let Some(action) = i.actions.pop() {
+        match action
+            .action_id
+            .or(action.name)
+            .ok_or("no action name".to_string())?
+            .as_str()
+        {
+            "homestead_confirm" => {
+                banker::message(&format!(
+                    "<@{}> invoice <@{}> {} for let's homestead, fred!",
+                    *banker::ID,
+                    i.user.id,
+                    *HOMESTEAD_PRICE,
+                ))
+                .await
+                .map_err(|e| format!("couldn't send Banker invoice DM: {}", e))?;
+
+                mrkdwn("Check your DMs from Banker for the homesteading invoice!")
+            }
+            "gotchi_nickname" => {
+                let mut blocks = Vec::new();
+
+                blocks.push(json!({
+                    "type": "input",
+                    "block_id": "gotchi_nickname_input",
+                    "label": {
+                        "type": "plain_text",
+                        "text": "Nickname Gotchi",
+                    },
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "gotchi_nickname_set",
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": "Nickname Gotchi",
+                        },
+                        "initial_value": action.value,
+                        "min_length": 1,
+                        "max_length": 41,
+                    }
+                }));
+
+                modal(
+                    "push",
+                    &i.trigger_id,
+                    "gotchi_nickname_modal",
+                    "Nickname Gotchi",
+                    &i.view.ok_or("no view!".to_string())?.private_metadata,
+                    blocks,
+                    Some("Change it!"),
+                )
+                .await?
+            }
+            "gotchi_page" => {
+                let mut blocks: Vec<Value> = Vec::new();
+
+                fn actions(buttons: &[&str], value: String) -> Value {
+                    json!({
+                        "type": "actions",
+                        "elements": buttons.iter().map(|action| json!({
+                            "type": "button",
+                            "text": {
+                                "text": action,
+                                "type": "plain_text",
+                            },
+                            "value": value,
+                            "action_id": format!("gotchi_{}", action.to_lowercase()),
+                        })).collect::<Vec<_>>()
+                    })
+                }
+
+                let gotchi: Possessed<Gotchi> = serde_json::from_str(&action.value).unwrap();
+
+                blocks.push(actions(&["Nickname"], gotchi.inner.nickname.clone()));
+
+                let text = [
+                    ("species", gotchi.name.clone()),
+                    ("base happiness", gotchi.inner.base_happiness.to_string()),
+                    (
+                        "owner log",
+                        gotchi
+                            .ownership_log
+                            .iter()
+                            .map(|o| format!("[{}]<@{}>", o.acquisition, o.id))
+                            .collect::<Vec<_>>()
+                            .join(" -> ")
+                            .to_string(),
+                    ),
+                ]
+                .iter()
+                .map(|(l, r)| format!("*{}:* _{}_", l, r))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+                blocks.push(json!({
+                    "type": "section",
+                    "text": mrkdwn(text),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
+                        "alt_text": "hackagotchi img",
+                    }
+                }));
+
+                blocks.push(actions(&["Trade", "Auction"], gotchi.sk()));
+
+                blocks.push(comment(format!(
+                    "*Lifetime GP harvested: {}*",
+                    gotchi
+                        .inner
+                        .harvest_log
+                        .iter()
+                        .map(|x| x.harvested)
+                        .sum::<usize>(),
+                )));
+                for owner in gotchi.inner.harvest_log.iter() {
+                    blocks.push(comment(format!(
+                        "{}gp harvested for <@{}>",
+                        owner.harvested, owner.id
+                    )));
+                }
+
+                modal(
+                    "open",
+                    &i.trigger_id,
+                    "gotchi_page",
+                    &gotchi.inner.nickname,
+                    &gotchi.sk(),
+                    blocks,
+                    None,
+                )
+                .await?
+            }
+            _ => mrkdwn("huh?"),
+        }
+    } else {
+        mrkdwn("no actions?")
+    })))
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -242,6 +482,13 @@ async fn event(e: Json<Event>) -> Result<(), String> {
 
     let r = serde_json::from_value::<Reply>(event).ok();
 
+    lazy_static::lazy_static! {
+        static ref SPAWN_POSSESSION_REGEX: regex::Regex = regex::Regex::new(
+            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?([A-z]+)"
+        ).unwrap();
+    }
+
+    // TODO: clean these two mofos up
     if let Some(paid_invoice) = r
         .as_ref()
         .and_then(banker::parse_paid_invoice)
@@ -251,15 +498,7 @@ async fn event(e: Json<Event>) -> Result<(), String> {
         Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee)
             .await
             .map_err(|_| "Couldn't put you in the hacksteader database!")?;
-    }
-
-    lazy_static::lazy_static! {
-        static ref SPAWN_POSSESSION_REGEX: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?([A-z]+)"
-        ).unwrap();
-    }
-
-    if let Some((receiver, archetype_handle)) = r
+    } else if let Some((receiver, archetype_handle)) = r
         .filter(|r| CONFIG.special_users.contains(&r.user_id))
         .as_ref()
         .and_then(|r| {
@@ -274,8 +513,6 @@ async fn event(e: Json<Event>) -> Result<(), String> {
             Some((receiver, archetype_handle))
         })
     {
-        println!("some reply found");
-
         Hacksteader::give_possession_from_archetype(
             &dyn_db(),
             receiver.to_string(),
@@ -283,8 +520,6 @@ async fn event(e: Json<Event>) -> Result<(), String> {
         )
         .await
         .map_err(|_| "hacksteader database problem")?;
-
-        return Ok(());
     }
 
     Ok(())

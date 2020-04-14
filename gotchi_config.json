@@ -8,7 +8,7 @@
       "name": "Adorpheus",
       "kind": {
         "Gotchi": {
-          "power": 3
+          "base_happiness": 3
         }
       }
     },
@@ -16,7 +16,7 @@
       "name": "Gempheus",
       "kind": {
         "Gotchi": {
-          "power": 3
+          "base_happiness": 3
         }
       }
     },
@@ -24,7 +24,7 @@
       "name": "Hackpheus",
       "kind": {
         "Gotchi": {
-          "power": 3
+          "base_happiness": 3
         }
       }
     },

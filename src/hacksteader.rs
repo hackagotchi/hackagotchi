@@ -1,7 +1,9 @@
 use humantime::{format_rfc3339, parse_rfc3339};
 use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::time::SystemTime;
 
 type Item = HashMap<String, AttributeValue>;
@@ -15,22 +17,22 @@ pub struct Config {
 }
 pub type ArchetypeHandle = usize;
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct GotchiArchetype {
-    pub power: usize,
+    pub base_happiness: usize,
 }
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct SeedArchetype;
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct KeepsakeArchetype;
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub enum ArchetypeKind {
     Gotchi(GotchiArchetype),
     Seed(SeedArchetype),
     Keepsake(KeepsakeArchetype),
 }
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct Archetype {
     pub name: String,
     pub kind: ArchetypeKind,
@@ -165,7 +167,7 @@ impl Hacksteader {
     }
 }
 
-pub trait Possessable: std::ops::Deref + std::fmt::Debug + PartialEq + Sized {
+pub trait Possessable: std::ops::Deref + std::fmt::Debug + PartialEq + Clone + Sized {
     /// The archetype that corresponds to this Possessable
     type A;
 
@@ -198,16 +200,17 @@ macro_rules! archetype_deref {
     };
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 pub struct Gotchi {
     archetype_handle: ArchetypeHandle,
-    harvest_log: Vec<GotchiHarvestOwner>,
+    pub nickname: String,
+    pub harvest_log: Vec<GotchiHarvestOwner>,
 }
 archetype_deref!(Gotchi);
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct GotchiHarvestOwner {
-    id: String,
-    harvested: usize,
+    pub id: String,
+    pub harvested: usize,
 }
 impl GotchiHarvestOwner {
     fn from_item(item: &Item) -> Option<Self> {
@@ -251,10 +254,11 @@ impl Possessable for Gotchi {
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
         Self {
             archetype_handle,
+            nickname: CONFIG.archetypes[archetype_handle].name.clone(),
             harvest_log: vec![GotchiHarvestOwner {
                 id: owner_id.to_string(),
                 harvested: 0,
-            }]
+            }],
         }
     }
     fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
@@ -267,6 +271,7 @@ impl Possessable for Gotchi {
         self.archetype_handle
     }
     fn fill_from_item(&mut self, item: &Item) -> Option<()> {
+        self.nickname = item.get("nickname")?.s.as_ref()?.clone();
         self.harvest_log = item
             .get("harvest_log")?
             .l
@@ -281,7 +286,20 @@ impl Possessable for Gotchi {
         item.insert(
             "harvest_log".to_string(),
             AttributeValue {
-                l: Some(self.harvest_log.iter().cloned().map(|gho| gho.into()).collect()),
+                l: Some(
+                    self.harvest_log
+                        .iter()
+                        .cloned()
+                        .map(|gho| gho.into())
+                        .collect(),
+                ),
+                ..Default::default()
+            },
+        );
+        item.insert(
+            "nickname".to_string(),
+            AttributeValue {
+                s: Some(self.nickname.clone()),
                 ..Default::default()
             },
         );
@@ -290,10 +308,14 @@ impl Possessable for Gotchi {
 #[test]
 fn gotchi_serialize() {
     dotenv::dotenv().ok();
-    
+
     let og = Gotchi::new(
-        CONFIG.archetypes.iter().position(|x| x.name == "Adorpheus").unwrap(),
-        "bob"
+        CONFIG
+            .archetypes
+            .iter()
+            .position(|x| x.name == "Adorpheus")
+            .unwrap(),
+        "bob",
     );
 
     let mut og_item = Item::new();
@@ -305,13 +327,13 @@ fn gotchi_serialize() {
     assert_eq!(og, og_copy);
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct Seed {
     archetype_handle: ArchetypeHandle,
     pedigree: Vec<SeedGrower>,
 }
 archetype_deref!(Seed);
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct SeedGrower {
     id: String,
     generations: usize,
@@ -395,7 +417,7 @@ impl Possessable for Seed {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Keepsake {
     archetype_handle: ArchetypeHandle,
 }
@@ -421,10 +443,10 @@ impl Possessable for Keepsake {
     fn write_item(&self, _item: &mut Item) {}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Owner {
-    id: String,
-    acquisition: Acquisition,
+    pub id: String,
+    pub acquisition: Acquisition,
 }
 impl Owner {
     fn from_item(item: &Item) -> Option<Self> {
@@ -473,30 +495,34 @@ fn owner_serialize() {
     assert_eq!(og, og_copy);
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Acquisition {
-    Trade { from: String },
-    Purchase { from: String, price: usize },
+    Trade,
+    Purchase { price: usize },
 }
 impl Acquisition {
     fn from_item(item: &Item) -> Option<Self> {
         let kind = item.get("type")?.s.as_ref()?.to_string();
-        let from = item.get("from")?.s.as_ref()?.to_string();
         match kind.as_str() {
-            "Trade" => Some(Acquisition::Trade { from }),
+            "Trade" => Some(Acquisition::Trade),
             "Purchase" => Some(Acquisition::Purchase {
                 price: item.get("price")?.n.as_ref()?.parse().ok()?,
-                from,
             }),
             _ => {
                 println!("unknown Acquisition type");
                 None
-            },
+            }
         }
     }
     fn spawned() -> Self {
-        Acquisition::Trade {
-            from: crate::ID.to_string(),
+        Acquisition::Trade
+    }
+}
+impl fmt::Display for Acquisition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Acquisition::Trade => write!(f, "Trade"),
+            Acquisition::Purchase { price } => write!(f, "Purchase({}gp)", price),
         }
     }
 }
@@ -504,40 +530,24 @@ impl Into<AttributeValue> for Acquisition {
     fn into(self) -> AttributeValue {
         AttributeValue {
             m: match self {
-                Acquisition::Trade { from } => Some(
-                    [
-                        (
-                            "type".to_string(),
-                            AttributeValue {
-                                s: Some("Trade".to_string()),
-                                ..Default::default()
-                            },
-                        ),
-                        (
-                            "from".to_string(),
-                            AttributeValue {
-                                s: Some(from),
-                                ..Default::default()
-                            },
-                        ),
-                    ]
+                Acquisition::Trade => Some(
+                    [(
+                        "type".to_string(),
+                        AttributeValue {
+                            s: Some("Trade".to_string()),
+                            ..Default::default()
+                        },
+                    )]
                     .iter()
                     .cloned()
                     .collect(),
                 ),
-                Acquisition::Purchase { from, price } => Some(
+                Acquisition::Purchase { price } => Some(
                     [
                         (
                             "type".to_string(),
                             AttributeValue {
                                 s: Some("Purchase".to_string()),
-                                ..Default::default()
-                            },
-                        ),
-                        (
-                            "from".to_string(),
-                            AttributeValue {
-                                s: Some(from),
                                 ..Default::default()
                             },
                         ),
@@ -571,12 +581,12 @@ fn acquisition_serialize() {
     assert_eq!(og, og_copy);
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Possessed<P: Possessable> {
     pub inner: P,
     pub archetype_handle: ArchetypeHandle,
-    ownership_log: Vec<Owner>,
-    count: usize,
+    id: uuid::Uuid,
+    pub ownership_log: Vec<Owner>,
 }
 
 impl<P: Possessable> std::ops::Deref for Possessed<P> {
@@ -591,8 +601,8 @@ impl<P: Possessable> Possessed<P> {
     pub fn new(archetype_handle: ArchetypeHandle, owner: Owner) -> Self {
         Self {
             inner: P::new(archetype_handle, &owner.id),
+            id: uuid::Uuid::new_v4(),
             archetype_handle,
-            count: 1,
             ownership_log: vec![owner],
         }
     }
@@ -604,7 +614,18 @@ impl<P: Possessable> Possessed<P> {
             .expect("invalid archetype handle")
     }
 
-    fn item(&self, slack_id: String) -> Item {
+    pub fn sk(&self) -> String {
+        let id_string = self.id.to_string();
+        let mut sk = String::with_capacity(id_string.len() + self.name.len() + 3);
+        sk.push(P::SIGN);
+        sk.push('#');
+        sk.push_str(&self.name);
+        sk.push('#');
+        sk.push_str(&id_string);
+        sk
+    }
+
+    pub fn empty_item_from_parts(sk: String, slack_id: String) -> Item {
         let mut m = Item::new();
         m.insert(
             "id".to_string(),
@@ -616,27 +637,19 @@ impl<P: Possessable> Possessed<P> {
         m.insert(
             "sk".to_string(),
             AttributeValue {
-                s: Some({
-                    let archetype_handle_string = self.archetype_handle.to_string();
-                    let mut sk =
-                        String::with_capacity(archetype_handle_string.len() + self.name.len() + 2);
-                    sk.push(P::SIGN);
-                    sk.push('#');
-                    sk.push_str(&self.name);
-                    sk.push('#');
-                    sk.push_str(&archetype_handle_string);
-                    sk
-                }),
+                s: Some(sk),
                 ..Default::default()
             },
         );
-        m.insert(
-            "count".to_string(),
-            AttributeValue {
-                n: Some(self.count.to_string()),
-                ..Default::default()
-            },
-        );
+        m
+    }
+
+    pub fn empty_item(&self, slack_id: String) -> Item {
+        Self::empty_item_from_parts(self.sk(), slack_id)
+    }
+
+    fn item(&self, slack_id: String) -> Item {
+        let mut m = self.empty_item(slack_id);
         m.insert(
             "ownership_log".to_string(),
             AttributeValue {
@@ -647,6 +660,13 @@ impl<P: Possessable> Possessed<P> {
                         .map(|x| x.into())
                         .collect(),
                 ),
+                ..Default::default()
+            },
+        );
+        m.insert(
+            "archetype_handle".to_string(),
+            AttributeValue {
+                n: Some(self.archetype_handle.to_string()),
                 ..Default::default()
             },
         );
@@ -664,7 +684,7 @@ impl<P: Possessable> Possessed<P> {
         assert_eq!(sign_section_chars.next(), None);
 
         let _name = sk_parts.next()?;
-        let archetype_handle = sk_parts.next()?.to_owned().parse().ok()?;
+        let archetype_handle = item.get("archetype_handle")?.n.as_ref()?.parse().ok()?;
 
         let mut inner = P::new(archetype_handle, item.get("id")?.s.as_ref()?);
         inner.fill_from_item(item);
@@ -672,6 +692,7 @@ impl<P: Possessable> Possessed<P> {
         Some(Self {
             inner,
             archetype_handle,
+            id: uuid::Uuid::parse_str(sk_parts.next()?).ok()?,
             ownership_log: item
                 .get("ownership_log")?
                 .l
@@ -679,7 +700,6 @@ impl<P: Possessable> Possessed<P> {
                 .iter()
                 .map(|x| Owner::from_item(x.m.as_ref()?))
                 .collect::<Option<_>>()?,
-            count: item.get("count")?.n.as_ref()?.parse().ok()?,
         })
     }
 }
@@ -688,11 +708,15 @@ fn possessed_gotchi_serialize() {
     dotenv::dotenv().ok();
 
     let og = Possessed::<Gotchi>::new(
-        CONFIG.archetypes.iter().position(|x| x.name == "Adorpheus").unwrap(),
+        CONFIG
+            .archetypes
+            .iter()
+            .position(|x| x.name == "Adorpheus")
+            .unwrap(),
         Owner {
             id: "bob".to_string(),
             acquisition: Acquisition::spawned(),
-        }
+        },
     );
 
     let og_item = og.item("bob".to_string());
