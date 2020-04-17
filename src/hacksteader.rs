@@ -1,6 +1,6 @@
 use humantime::{format_rfc3339, parse_rfc3339};
 use rusoto_core::RusotoError;
-use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
+use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError, DeleteItemError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -36,6 +36,77 @@ pub enum ArchetypeKind {
 pub struct Archetype {
     pub name: String,
     pub kind: ArchetypeKind,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Category {
+    Seeds,
+    Gotchis,
+    Farmables,
+}
+impl Category {
+    fn iter() -> impl ExactSizeIterator<Item = Category> {
+        [Seeds, Gotchis, Farmables].iter().cloned()
+    }
+    fn to_char(self) -> char {
+        use Category::*;
+
+        match self {
+            Seeds => 'S',
+            Gotchis => 'G',
+            Farmables => 'F',
+        }
+    }
+    
+    fn from_char(c: char) -> Option<Self> {
+        use Category::*;
+
+        Some(match self {
+            'S' => Seeds,
+            'G' => Gotchis,
+            'F' => Farmables,
+            _ => return None,
+        })
+    }
+}
+
+/// A full Secondary Key in the database.
+/// There are also Secondary Keys that are simply Ps,
+/// for profiles, but no special abstraction for dealing
+/// with them is necessary.
+pub struct Sk {
+    name: String,
+    id: String,
+    category: Category
+}
+impl Sk {
+    fn to_string(self) -> String {
+        let mut s = String::with_capacity(self.id.len() + self.name.len() + 3);
+        s.push(P::SIGN);
+
+        s.push('#');
+        s.push_str(&self.name);
+        s.push('#');
+        s.push_str(&self.id);
+        s
+    }
+    fn from_string(s: &str) -> Option<Sk> {
+        let mut sk_parts = s.split("#");
+
+        Self {
+            category: Category::from_char({
+                let mut category_section_chars = sk_parts.next()?.chars();
+
+                // first section should have one char, that char should be a valid
+                let category_char = category_section_chars.next()?;
+                assert_eq!(category_section_chars.next(), None);
+
+                category_char
+            }),
+            name: sk_parts.next()?,
+            id: uuid::Uuid::parse_str(sk_parts.next()?).ok()?,
+        }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -90,15 +161,15 @@ impl Hacksteader {
         {
             ArchetypeKind::Gotchi(_) => {
                 let i = Possessed::<Gotchi>::new(ah, owner);
-                Self::give_possession(db, user_id, i).await
+                Self::give_possession(db, user_id, &i).await
             }
             ArchetypeKind::Seed(_) => {
                 let i = Possessed::<Seed>::new(ah, owner);
-                Self::give_possession(db, user_id, i).await
+                Self::give_possession(db, user_id, &i).await
             }
             ArchetypeKind::Keepsake(_) => {
                 let i = Possessed::<Keepsake>::new(ah, owner);
-                Self::give_possession(db, user_id, i).await
+                Self::give_possession(db, user_id, &i).await
             }
         }
     }
@@ -106,7 +177,7 @@ impl Hacksteader {
     pub async fn give_possession<P: Possessable>(
         db: &DynamoDbClient,
         user_id: String,
-        possession: Possessed<P>,
+        possession: &Possessed<P>,
     ) -> Result<(), RusotoError<PutItemError>> {
         db.put_item(rusoto_dynamodb::PutItemInput {
             item: possession.item(user_id),
@@ -115,6 +186,44 @@ impl Hacksteader {
         })
         .await
         .map(|_| ())
+    }
+
+    pub async fn take_possession<P: Possessable>(
+        db: &DynamoDbClient,
+        user_id: String,
+        possession: &Possessed<P>,
+    ) -> Result<(), RusotoError<DeleteItemError>> {
+        db.delete_item(rusoto_dynamodb::DeleteItemInput {
+            key: possession.empty_item(user_id),
+            table_name: TABLE_NAME.to_string(),
+            ..Default::default()
+        })
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn transfer_possession<P: Possessable>(
+        db: &DynamoDbClient,
+        old_owner: String,
+        new_owner: String,
+        acquisition: Acquisition,
+        possession: &mut Possessed<P>,
+    ) -> Result<(), String> {
+        // record this transaction, for posterity
+        possession.ownership_log.push(Owner {
+            id: new_owner.clone(),
+            acquisition,
+        });
+
+        // take from the rich
+        Self::take_possession(db, old_owner, possession)
+            .await
+            .map_err(|e| dbg!(format!("Couldn't take to transfer ownership in database: {}", e)))?;
+
+        // give to the poor
+        Self::give_possession(db, new_owner, possession)
+            .await
+            .map_err(|e| dbg!(format!("Couldn't give to transfer ownership in database: {}", e)))
     }
 
     pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Option<Self> {
@@ -615,14 +724,7 @@ impl<P: Possessable> Possessed<P> {
     }
 
     pub fn sk(&self) -> String {
-        let id_string = self.id.to_string();
-        let mut sk = String::with_capacity(id_string.len() + self.name.len() + 3);
-        sk.push(P::SIGN);
-        sk.push('#');
-        sk.push_str(&self.name);
-        sk.push('#');
-        sk.push_str(&id_string);
-        sk
+        Sk { id: self.id, category: P::Sign, name: self.name }.to_string()
     }
 
     pub fn empty_item_from_parts(sk: String, slack_id: String) -> Item {
@@ -675,7 +777,7 @@ impl<P: Possessable> Possessed<P> {
     }
 
     pub fn from_item(item: &Item) -> Option<Self> {
-        let mut sk_parts = item.get("sk")?.s.as_ref()?.split("#");
+        let mut Sk { category, id, name } = Sk::from_string(&item.get("sk")?.s?)?;
         let mut sign_section_chars = sk_parts.next()?.chars();
 
         // first section should have one char, that char should be the sign
@@ -692,7 +794,7 @@ impl<P: Possessable> Possessed<P> {
         Some(Self {
             inner,
             archetype_handle,
-            id: uuid::Uuid::parse_str(sk_parts.next()?).ok()?,
+            id: ,
             ownership_log: item
                 .get("ownership_log")?
                 .l
