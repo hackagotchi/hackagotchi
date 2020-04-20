@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 mod banker;
 mod hacksteader;
+mod market;
 
 use hacksteader::{Gotchi, Hacksteader, Possessed};
 
@@ -154,7 +155,7 @@ impl GotchiPage {
             }
         }));
 
-        blocks.push(actions(&["Trade", "Auction"], gotchi.sk()));
+        blocks.push(actions(&["Give", "Sell"], gotchi.sk()));
 
         blocks.push(comment(format!(
             "*Lifetime GP harvested: {}*",
@@ -293,12 +294,12 @@ macro_rules! hacksteader_opening_blurb { ( $hackstead_cost:expr ) => { format!(
 
 :corn: Grow your own Farmables which make Hackagotchi happier!
 :sparkling_heart: Earn passive income by collecting adorable Hackagotchi!
-:money_with_wings: Buy, sell and trade Farmables and Hackagotchi at an open auction!
+:money_with_wings: Buy, sell and trade Farmables and Hackagotchi at an open market!
 
 Hacksteading costs *{} GP*.
 As a Hacksteader, you'll have a plot of land on which to grow your own Farmables which make Hackagotchi happier. \
 Happier Hackagotchi generate more passive income! \
-You can also buy, sell, and trade Farmables and Hackagotchi for GP on an open auction space. \
+You can also buy, sell, and trade Farmables and Hackagotchi for GP on an open market space. \
 ",
 $hackstead_cost
 ) } }
@@ -345,8 +346,38 @@ fn hacksteader_greeting_blocks(
     o
 }
 
-fn hackmarket_blocks() -> Vec<Value> {
-    vec![]
+async fn hackmarket_blocks() -> Vec<Value> {
+    let sales = market::market_search(&dyn_db()).await.unwrap();
+    let mut blocks = Vec::with_capacity(sales.len() * 2 + 3);
+
+    blocks.push(json!({ "type": "divider" }));
+    blocks.push(json!({
+        "type": "section",
+        "fields": [mrkdwn("*Name*"), mrkdwn("*Seller*")],
+        "accessory": {
+            "type": "button",
+            "style": "danger",
+            "text": plain_text("Price"),
+        }
+    }));
+    blocks.push(json!({ "type": "divider" }));
+
+    for sale in sales.iter() {
+        blocks.push(json!({
+            "type": "section",
+            "fields": [plain_text(format!(":{0}: {0}", sale.name)), mrkdwn(format!("<@{}>", sale.seller))],
+            "accessory": {
+                "type": "button",
+                "style": "primary",
+                "text": plain_text(format!("{}gp", sale.price)),
+                "action_id": "market_purchase",
+                "value": serde_json::to_string(&sale).unwrap(),
+            }
+        }));
+        blocks.push(json!({ "type": "divider" }));
+    }
+
+    dbg!(blocks)
 }
 
 #[derive(FromForm, Debug)]
@@ -366,7 +397,7 @@ struct SlashCommand {
 #[post("/hackmarket", data = "<slash_command>")]
 async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     Json(json!({
-        "blocks": hackmarket_blocks(),
+        "blocks": hackmarket_blocks().await,
         "response_type": "in_channel",
     }))
 }
@@ -570,8 +601,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
             println!("view state values: {:#?}", values);
 
             if let Some(Value::String(nickname)) = values
-                .get("gotchi_nickname_input")
-                .and_then(|i| i.get("gotchi_nickname_set"))
+                .get("gotchi_nickname_block")
+                .and_then(|i| i.get("gotchi_nickname_input"))
                 .and_then(|s| s.get("value"))
             {
                 // update the nickname in the DB
@@ -603,7 +634,9 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 let page_json = serde_json::to_string(&page).unwrap();
 
                 // update the page in the background with the new gotchi data
-                page.modal_update(trigger_id.to_string(), page_json, view.root_view_id).launch().await?;
+                page.modal_update(trigger_id.to_string(), page_json, view.root_view_id)
+                    .launch()
+                    .await?;
 
                 // update the home tab
                 // TODO: make this not read from the database
@@ -611,33 +644,48 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
 
                 // this will close the "enter nickname" modal
                 return Ok(ActionResponse::Ok(()));
+            } else if let Some(price) = values
+                .get("gotchi_sell_price_block")
+                .and_then(|i| i.get("gotchi_sell_price_input"))
+                .and_then(|s| s.get("value")) 
+                .and_then(|x| x.as_str())
+                .and_then(|s| s.parse().ok())
+            {
+                println!("selling {} for {}", page.gotchi.sk(), price);
+                market::place_on_market(&dyn_db(), user.id, page.gotchi.sk(), price).await?;
+
+                return Ok(ActionResponse::Ok(()));
             } else if let Some(Value::String(new_owner)) = values
-                .get("gotchi_trade_input")
-                .and_then(|i| i.get("gotchi_trade_confirm"))
+                .get("gotchi_gift_receiver_block")
+                .and_then(|i| i.get("gotchi_gift_receiver_input"))
                 .and_then(|s| s.get("selected_user"))
             {
-                println!("trading {} from {} to {}", view.private_metadata, user.id, new_owner);
+                println!(
+                    "giving {} from {} to {}",
+                    view.private_metadata, user.id, new_owner
+                );
 
                 if user.id == *new_owner {
-                    println!("self trade attempted");
+                    println!("self giving attempted");
 
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "errors",
                         "errors": {
-                            "gotchi_trade_input": "absolutely not okay",
+                            "gotchi_gift_receiver_input": "absolutely not okay",
                         }
                     }))));
                 }
 
                 // update the owner in the DB
                 Hacksteader::transfer_possession(
-                    &dyn_db(), 
-                    user.id.clone(), 
-                    new_owner.clone(), 
+                    &dyn_db(),
+                    user.id.clone(),
+                    new_owner.clone(),
                     hacksteader::Acquisition::Trade,
-                    &mut page.gotchi
-                ).await?;
-                
+                    &mut page.gotchi,
+                )
+                .await?;
+
                 // update the home tab
                 // TODO: make this not read from the database
                 update_user_home_tab(user.id.clone()).await?;
@@ -666,7 +714,6 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     )));
                     blocks
                 }).await?;
-
 
                 // close ALL THE MODALS!!!
                 return Ok(ActionResponse::Json(Json(json!({
@@ -701,7 +748,41 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
 
                     mrkdwn("Check your DMs from Banker for the homesteading invoice!")
                 }
-                "gotchi_trade" => {
+                "gotchi_sell" => {
+                    let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
+                    //let page: GotchiPage = serde_json::from_str(&page_json).map_err(|e| dbg!(format!("couldn't parse {}: {}", page_json, e)))?;
+
+                    Modal {
+                        method: "push".to_string(),
+                        trigger_id: i.trigger_id,
+                        callback_id: "gotchi_sell_modal".to_string(),
+                        title: "Sell Gotchi".to_string(),
+                        private_metadata: page_json,
+                        blocks: vec![
+                            json!({
+                                "type": "input",
+                                "block_id": "gotchi_sell_price_block",
+                                "label": plain_text("Price (gp)"),
+                                "element": {
+                                    "type": "plain_text_input",
+                                    "action_id": "gotchi_sell_price_input",
+                                    "placeholder": plain_text("Price Gotchi"),
+                                    "initial_value": "50",
+                                }
+                            }),
+                            json!({ "type": "divider" }),
+                            comment("As a form of confirmation, you'll get an invoice to pay before your Gotchi goes up on the auction. \
+                                To fund Harvests and to encourage Hacksteaders to keep prices sensible, \
+                                this invoice is 5% of the price of your sale \
+                                rounded down to the nearest GP (meaning that sales below 20gp aren't taxed at all)."),
+                        ],
+                        submit: Some("Sell!".to_string()),
+                        ..Default::default()
+                    }
+                    .launch()
+                    .await?
+                }
+                "gotchi_gift" => {
                     let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
                     let page: GotchiPage = serde_json::from_str(&page_json)
                         .map_err(|e| dbg!(format!("couldn't parse {}: {}", page_json, e)))?;
@@ -709,16 +790,16 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     Modal {
                         method: "push".to_string(),
                         trigger_id: i.trigger_id,
-                        callback_id: "gotchi_trade_modal".to_string(),
-                        title: "Trade Gotchi".to_string(),
+                        callback_id: "gotchi_give_modal".to_string(),
+                        title: "Give Gotchi".to_string(),
                         blocks: vec![json!({
                             "type": "input",
-                            "block_id": "gotchi_trade_input",
-                            "label": plain_text("Trade Gotchi"),
+                            "block_id": "gotchi_give_receiver_block",
+                            "label": plain_text("Give Gotchi"),
                             "element": {
                                 "type": "users_select",
-                                "action_id": "gotchi_trade_confirm",
-                                "placeholder": plain_text("Who Gets your Gotchi?"),
+                                "action_id": "gotchi_give_receiver_input",
+                                "placeholder": plain_text("Who Really Gets your Gotchi?"),
                                 "initial_user": ({
                                     let s = &hacksteader::CONFIG.special_users;
                                     &s.get(page_json.len() % s.len()).unwrap_or(&*ID)
@@ -752,15 +833,15 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                         private_metadata: i.view.ok_or("no view!".to_string())?.private_metadata,
                         blocks: vec![json!({
                             "type": "input",
-                            "block_id": "gotchi_nickname_input",
+                            "block_id": "gotchi_nickname_block",
                             "label": plain_text("Nickname Gotchi"),
                             "element": {
                                 "type": "plain_text_input",
-                                "action_id": "gotchi_nickname_set",
+                                "action_id": "gotchi_nickname_input",
                                 "placeholder": plain_text("Nickname Gotchi"),
                                 "initial_value": action.value,
                                 "min_length": 1,
-                                "max_length": 41,
+                                "max_length": 25,
                             }
                         })],
                         submit: Some("Change it!".to_string()),
@@ -775,6 +856,16 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
 
                     page.modal(i.trigger_id, page_json).launch().await?
                 }
+                /*
+                "market_purchase" => {
+                    let sale_json = action.value;
+                    let sale: market::Sale = serde_json::from_str(&sale_json).unwrap();
+
+                    let page = GotchiPage {
+
+                    if sale.seller == i.user.id {
+                    }
+                }*/
                 _ => mrkdwn("huh?"),
             }
         } else {

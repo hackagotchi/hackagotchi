@@ -1,6 +1,6 @@
 use humantime::{format_rfc3339, parse_rfc3339};
 use rusoto_core::RusotoError;
-use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError, DeleteItemError};
+use rusoto_dynamodb::{AttributeValue, DeleteItemError, DynamoDb, DynamoDbClient, PutItemError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -38,35 +38,39 @@ pub struct Archetype {
     pub kind: ArchetypeKind,
 }
 
-#[derive(Copy, Clone, Debug)]
+// A searchable category in the market. May or may not
+// correspond 1:1 to an Archetype.
+#[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Category {
-    Seeds,
-    Gotchis,
-    Farmables,
+    Profiles=0,
+    Gotchis=1,
+    Misc=2,
+    Orders=9,
 }
 impl Category {
+    /*
     fn iter() -> impl ExactSizeIterator<Item = Category> {
-        [Seeds, Gotchis, Farmables].iter().cloned()
-    }
-    fn to_char(self) -> char {
+        use Category::*;
+        [Gotchis, Profiles, Orders, Misc].iter().cloned()
+    }*/
+
+    pub fn from_av(av: &AttributeValue) -> Option<Self> {
         use Category::*;
 
-        match self {
-            Seeds => 'S',
-            Gotchis => 'G',
-            Farmables => 'F',
-        }
-    }
-    
-    fn from_char(c: char) -> Option<Self> {
-        use Category::*;
-
-        Some(match self {
-            'S' => Seeds,
+        Some(match av.n.as_ref()?.parse().ok()? {
+            'P' => Profiles,
+            'O' => Orders,
             'G' => Gotchis,
-            'F' => Farmables,
+            'M' => Misc,
             _ => return None,
         })
+    }
+
+    pub fn into_av(self) -> AttributeValue {
+        AttributeValue {
+            n: Some((self as u8).to_string()),
+            ..Default::default()
+        }
     }
 }
 
@@ -75,37 +79,30 @@ impl Category {
 /// for profiles, but no special abstraction for dealing
 /// with them is necessary.
 pub struct Sk {
-    name: String,
-    id: String,
-    category: Category
+    pub owner: String,
+    pub name: String,
+    pub id: uuid::Uuid,
 }
 impl Sk {
-    fn to_string(self) -> String {
-        let mut s = String::with_capacity(self.id.len() + self.name.len() + 3);
-        s.push(P::SIGN);
+    pub fn to_string(self) -> String {
+        let id_string = self.id.to_string();
+        let mut s = String::with_capacity(id_string.len() + self.name.len() + self.owner.len() + 2);
 
+        s.push_str(&self.owner);
         s.push('#');
         s.push_str(&self.name);
         s.push('#');
-        s.push_str(&self.id);
+        s.push_str(&id_string);
         s
     }
-    fn from_string(s: &str) -> Option<Sk> {
+    pub fn from_string(s: &str) -> Option<Sk> {
         let mut sk_parts = s.split("#");
 
-        Self {
-            category: Category::from_char({
-                let mut category_section_chars = sk_parts.next()?.chars();
-
-                // first section should have one char, that char should be a valid
-                let category_char = category_section_chars.next()?;
-                assert_eq!(category_section_chars.next(), None);
-
-                category_char
-            }),
-            name: sk_parts.next()?,
+        Some(Self {
+            owner: sk_parts.next()?.to_string(),
+            name: sk_parts.next()?.to_string(),
             id: uuid::Uuid::parse_str(sk_parts.next()?).ok()?,
-        }
+        })
     }
 }
 
@@ -125,7 +122,7 @@ pub struct Hacksteader {
     pub profile: HacksteaderProfile,
     pub gotchis: Vec<Possessed<Gotchi>>,
     pub seeds: Vec<Possessed<Seed>>,
-    pub keepsakes: Vec<Possessed<Keepsake>>,
+    //pub keepsakes: Vec<Possessed<Keepsake>>,
 }
 impl Hacksteader {
     pub async fn new_in_db(
@@ -218,48 +215,60 @@ impl Hacksteader {
         // take from the rich
         Self::take_possession(db, old_owner, possession)
             .await
-            .map_err(|e| dbg!(format!("Couldn't take to transfer ownership in database: {}", e)))?;
+            .map_err(|e| {
+                dbg!(format!(
+                    "Couldn't take to transfer ownership in database: {}",
+                    e
+                ))
+            })?;
 
         // give to the poor
         Self::give_possession(db, new_owner, possession)
             .await
-            .map_err(|e| dbg!(format!("Couldn't give to transfer ownership in database: {}", e)))
+            .map_err(|e| {
+                dbg!(format!(
+                    "Couldn't give to transfer ownership in database: {}",
+                    e
+                ))
+            })
     }
 
     pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Option<Self> {
         let query = db
             .query(rusoto_dynamodb::QueryInput {
                 table_name: TABLE_NAME.to_string(),
-                key_condition_expression: Some("id = :db_id".to_string()),
+                key_condition_expression: Some("cat between :min_cat and :max_cat and sk = :db_id".to_string()),
                 expression_attribute_values: Some({
-                    let mut m = HashMap::new();
-                    m.insert(
-                        ":db_id".to_string(),
-                        AttributeValue {
+                    [
+                        (":db_id".to_string(), AttributeValue {
                             s: Some(user_id.clone()),
                             ..Default::default()
-                        },
-                    );
-                    m
+                        }),
+                        (":min_cat".to_string(), Category::Profiles.into_av()),
+                        (":max_cat".to_string(), AttributeValue {
+                            n: Some(((Category::Orders as usize) - 1).to_string()),
+                            ..Default::default()
+                        })
+                    ]
+                        .iter()
+                        .cloned()
+                        .collect()
                 }),
                 ..Default::default()
             })
             .await;
-        let items = query.ok()?.items?;
+        let items = query.map_err(|e| println!("couldn't profile query: {}", e)).ok()?.items?;
 
         let mut profile = None;
         let mut gotchis = Vec::new();
         let mut seeds = Vec::new();
-        let mut keepsakes = Vec::new();
 
         for item in items.iter() {
             (|| -> Option<()> {
-                let sk = item.get("sk")?.s.as_ref()?;
-                match sk.chars().next()? {
-                    'P' => profile = Some(HacksteaderProfile::from_item(item)?),
-                    'G' => gotchis.push(Possessed::from_item(item)?),
-                    'S' => seeds.push(Possessed::from_item(item)?),
-                    'K' => keepsakes.push(Possessed::from_item(item)?),
+                match Category::from_av(item.get("cat")?)? {
+                    Category::Profiles => profile = Some(HacksteaderProfile::from_item(item)?),
+                    Category::Gotchis => gotchis.push(Possessed::from_item(item)?),
+                    Category::Misc => seeds.push(Possessed::from_item(item)?),
                     _ => unreachable!(),
                 }
                 Some(())
@@ -271,7 +280,6 @@ impl Hacksteader {
             user_id,
             gotchis,
             seeds,
-            keepsakes,
         })
     }
 }
@@ -281,7 +289,7 @@ pub trait Possessable: std::ops::Deref + std::fmt::Debug + PartialEq + Clone + S
     type A;
 
     /// A char used in the ids that this Possessable serializes into in the database.
-    const SIGN: char;
+    const CATEGORY: Category;
 
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self;
     fn archetype_handle(&self) -> ArchetypeHandle;
@@ -359,7 +367,7 @@ impl Into<AttributeValue> for GotchiHarvestOwner {
 }
 impl Possessable for Gotchi {
     type A = GotchiArchetype;
-    const SIGN: char = 'G';
+    const CATEGORY: Category = Category::Gotchis;
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
         Self {
             archetype_handle,
@@ -485,7 +493,7 @@ impl Into<AttributeValue> for SeedGrower {
 }
 impl Possessable for Seed {
     type A = SeedArchetype;
-    const SIGN: char = 'G';
+    const CATEGORY: Category = Category::Misc;
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
         Self {
             archetype_handle,
@@ -533,7 +541,8 @@ pub struct Keepsake {
 archetype_deref!(Keepsake);
 impl Possessable for Keepsake {
     type A = KeepsakeArchetype;
-    const SIGN: char = 'K';
+    const CATEGORY: Category = Category::Misc;
+
     fn new(archetype_handle: ArchetypeHandle, _owner_id: &str) -> Self {
         Self { archetype_handle }
     }
@@ -724,30 +733,26 @@ impl<P: Possessable> Possessed<P> {
     }
 
     pub fn sk(&self) -> String {
-        Sk { id: self.id, category: P::Sign, name: self.name }.to_string()
-    }
-
-    pub fn empty_item_from_parts(sk: String, slack_id: String) -> Item {
-        let mut m = Item::new();
-        m.insert(
-            "id".to_string(),
-            AttributeValue {
-                s: Some(slack_id),
-                ..Default::default()
-            },
-        );
-        m.insert(
-            "sk".to_string(),
-            AttributeValue {
-                s: Some(sk),
-                ..Default::default()
-            },
-        );
-        m
+        Sk {
+            id: self.id,
+            owner: self.ownership_log.last().unwrap().id.clone(),
+            name: self.name.clone(),
+        }
+        .to_string()
     }
 
     pub fn empty_item(&self, slack_id: String) -> Item {
-        Self::empty_item_from_parts(self.sk(), slack_id)
+        [
+            ("cat".to_string(), P::CATEGORY.into_av()),
+            ("sk".to_string(), AttributeValue {
+                s: Some(format!("{}#{}#{}", slack_id, self.name, self.id.to_string())),
+                ..Default::default()
+            })
+        ]
+            .iter()
+            .cloned()
+            .collect()
+
     }
 
     fn item(&self, slack_id: String) -> Item {
@@ -777,32 +782,35 @@ impl<P: Possessable> Possessed<P> {
     }
 
     pub fn from_item(item: &Item) -> Option<Self> {
-        let mut Sk { category, id, name } = Sk::from_string(&item.get("sk")?.s?)?;
-        let mut sign_section_chars = sk_parts.next()?.chars();
+        println!("parsing item into Possessable");
+        let Sk { id, owner, .. } = Sk::from_string(&item.get("sk")?.s.as_ref()?)?;
+        println!("parsed sk");
+        let category = Category::from_av(item.get("cat")?)?;
+        println!("parsed category");
 
-        // first section should have one char, that char should be the sign
-        // of this possessable.
-        assert_eq!(sign_section_chars.next(), Some(P::SIGN));
-        assert_eq!(sign_section_chars.next(), None);
+        // make sure this is the right category of item
+        if P::CATEGORY == category {
+            let archetype_handle = item.get("archetype_handle")?.n.as_ref()?.parse().ok()?;
+            println!("parsed archetype handle");
 
-        let _name = sk_parts.next()?;
-        let archetype_handle = item.get("archetype_handle")?.n.as_ref()?.parse().ok()?;
+            let mut inner = P::new(archetype_handle, &owner);
+            inner.fill_from_item(item);
 
-        let mut inner = P::new(archetype_handle, item.get("id")?.s.as_ref()?);
-        inner.fill_from_item(item);
-
-        Some(Self {
-            inner,
-            archetype_handle,
-            id: ,
-            ownership_log: item
-                .get("ownership_log")?
-                .l
-                .as_ref()?
-                .iter()
-                .map(|x| Owner::from_item(x.m.as_ref()?))
-                .collect::<Option<_>>()?,
-        })
+            Some(Self {
+                inner,
+                archetype_handle,
+                id,
+                ownership_log: item
+                    .get("ownership_log")?
+                    .l
+                    .as_ref()?
+                    .iter()
+                    .map(|x| Owner::from_item(x.m.as_ref()?))
+                    .collect::<Option<_>>()?,
+            })
+        } else {
+            None
+        }
     }
 }
 #[test]
@@ -840,22 +848,19 @@ impl HacksteaderProfile {
     /// Returns an empty profile Item for the given slack ID.
     /// Useful for searching for a given slack user's Hacksteader profile
     fn empty_item(user_id: String) -> Item {
-        let mut m = Item::new();
-        m.insert(
-            "id".to_string(),
-            AttributeValue {
-                s: Some(user_id),
-                ..Default::default()
-            },
-        );
-        m.insert(
-            "sk".to_string(),
-            AttributeValue {
-                s: Some("P".to_string()),
-                ..Default::default()
-            },
-        );
-        m
+        [
+            ("cat".to_string(), Category::Profiles.into_av()),
+            (
+                "sk".to_string(),
+                AttributeValue {
+                    s: Some(user_id),
+                    ..Default::default()
+                },
+            )
+        ]
+        .iter()
+        .cloned()
+        .collect()
     }
 
     pub fn item(&self, user_id: String) -> Item {
