@@ -5,6 +5,7 @@ use rocket::{post, routes, FromForm};
 use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
+use std::convert::TryInto;
 
 mod banker;
 mod hacksteader;
@@ -21,7 +22,7 @@ lazy_static::lazy_static! {
     pub static ref ID: String = std::env::var("ID").unwrap();
     pub static ref APP_ID: String = std::env::var("APP_ID").unwrap();
     pub static ref URL: String = std::env::var("URL").unwrap();
-    pub static ref HOMESTEAD_PRICE: usize = std::env::var("HOMESTEAD_PRICE").unwrap().parse().unwrap();
+    pub static ref HACKSTEAD_PRICE: u64 = std::env::var("HACKSTEAD_PRICE").unwrap().parse().unwrap();
 }
 
 fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
@@ -51,6 +52,8 @@ async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
         "token": *TOKEN,
         "blocks": blocks
     });
+
+    println!("{}", serde_json::to_string_pretty(&o).unwrap());
 
     // TODO: use response
     let client = reqwest::Client::new();
@@ -109,22 +112,27 @@ impl GotchiPage {
             interactivity,
         } = self;
 
-        let actions = |buttons: &[&str], value: String| -> Value {
+        let actions = |buttons: &[(&str, Option<&str>)]| -> Value {
             match interactivity {
                 Interactivity::Dynamic => json!({
                     "type": "actions",
-                    "elements": buttons.iter().map(|action| json!({
-                        "type": "button",
-                        "text": plain_text(action),
-                        "value": value,
-                        "action_id": format!("gotchi_{}", action.to_lowercase()),
-                    })).collect::<Vec<_>>()
+                    "elements": buttons.iter().map(|(action, value)| {
+                        let mut o = json!({
+                            "type": "button",
+                            "text": plain_text(action),
+                            "action_id": format!("gotchi_{}", action.to_lowercase()),
+                        });
+                        if let Some(v) = value {
+                            o.as_object_mut().unwrap().insert("value".to_string(), json!(v.clone()));
+                        }
+                        o
+                    }).collect::<Vec<_>>()
                 }),
                 Interactivity::Static => comment("This gotchi page is read only."),
             }
         };
 
-        blocks.push(actions(&["Nickname"], gotchi.inner.nickname.clone()));
+        blocks.push(actions(&[("Nickname", Some(&gotchi.inner.nickname))]));
 
         let text = [
             ("species", gotchi.name.clone()),
@@ -155,7 +163,7 @@ impl GotchiPage {
             }
         }));
 
-        blocks.push(actions(&["Give", "Sell"], gotchi.sk()));
+        blocks.push(actions(&[("Give", None), ("Sell", None)]));
 
         blocks.push(comment(format!(
             "*Lifetime GP harvested: {}*",
@@ -164,7 +172,7 @@ impl GotchiPage {
                 .harvest_log
                 .iter()
                 .map(|x| x.harvested)
-                .sum::<usize>(),
+                .sum::<u64>(),
         )));
         for owner in gotchi.inner.harvest_log.iter() {
             blocks.push(comment(format!(
@@ -239,7 +247,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity) -> Vec<Value>
             .gotchis
             .iter()
             .map(|g| g.inner.base_happiness)
-            .sum::<usize>();
+            .sum::<u64>();
 
         for gotchi in hs.gotchis.into_iter() {
             blocks.push(json!({
@@ -273,7 +281,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity) -> Vec<Value>
     if let Interactivity::Static = interactivity {
         blocks.push(comment(format!(
             "This is a read-only snapshot of <@{}>'s Hackagotchi Hackstead at a specific point in time. \
-            You can manage your own Hackagotchi Homestead in real time at your \
+            You can manage your own Hackagotchi Hackstead in real time at your \
             <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
             hs.user_id,
             *APP_ID,
@@ -308,13 +316,13 @@ fn hackstead_explanation_blocks() -> Vec<Value> {
     vec![
         json!({
             "type": "section",
-            "text": mrkdwn(hacksteader_opening_blurb!(*HOMESTEAD_PRICE)),
+            "text": mrkdwn(hacksteader_opening_blurb!(*HACKSTEAD_PRICE)),
         }),
         json!({
             "type": "actions",
             "elements": [{
                 "type": "button",
-                "action_id": "homestead_confirm",
+                "action_id": "hackstead_confirm",
                 "style": "danger",
                 "text": plain_text("Monopolize on Adorableness?"),
                 "confirm": {
@@ -347,7 +355,7 @@ fn hacksteader_greeting_blocks(
 }
 
 async fn hackmarket_blocks() -> Vec<Value> {
-    let sales = market::market_search(&dyn_db()).await.unwrap();
+    let sales = market::market_search(&dyn_db(), hacksteader::Category::Gotchi).await.unwrap();
     let mut blocks = Vec::with_capacity(sales.len() * 2 + 3);
 
     blocks.push(json!({ "type": "divider" }));
@@ -362,16 +370,19 @@ async fn hackmarket_blocks() -> Vec<Value> {
     }));
     blocks.push(json!({ "type": "divider" }));
 
-    for sale in sales.iter() {
+    for (gotchi, sale) in sales.into_iter() {
         blocks.push(json!({
             "type": "section",
-            "fields": [plain_text(format!(":{0}: {0}", sale.name)), mrkdwn(format!("<@{}>", sale.seller))],
+            "fields": [
+                plain_text(format!(":{0}: {0}", sale.market_name)),
+                mrkdwn(format!("<@{}>", gotchi.steader))
+            ],
             "accessory": {
                 "type": "button",
                 "style": "primary",
                 "text": plain_text(format!("{}gp", sale.price)),
-                "action_id": "market_purchase",
-                "value": serde_json::to_string(&sale).unwrap(),
+                "action_id": "gotchi_market_page",
+                "value": serde_json::to_string(&(gotchi, sale)).unwrap(),
             }
         }));
         blocks.push(json!({ "type": "divider" }));
@@ -609,9 +620,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 let db = dyn_db();
                 db.update_item(rusoto_dynamodb::UpdateItemInput {
                     table_name: hacksteader::TABLE_NAME.to_string(),
-                    key: page.gotchi.empty_item(user.id.clone()),
+                    key: page.gotchi.empty_item(),
                     update_expression: Some("SET nickname = :new_name".to_string()),
-                    condition_expression: Some("attribute_exists(nickname)".to_string()),
                     expression_attribute_values: Some(
                         [(
                             ":new_name".to_string(),
@@ -647,17 +657,27 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
             } else if let Some(price) = values
                 .get("gotchi_sell_price_block")
                 .and_then(|i| i.get("gotchi_sell_price_input"))
-                .and_then(|s| s.get("value")) 
+                .and_then(|s| s.get("value"))
                 .and_then(|x| x.as_str())
-                .and_then(|s| s.parse().ok())
+                .and_then(|s| s.parse::<u64>().ok())
             {
-                println!("selling {} for {}", page.gotchi.sk(), price);
-                market::place_on_market(&dyn_db(), user.id, page.gotchi.sk(), price).await?;
+                banker::invoice(
+                    &user.id,
+                    price / 20_u64,
+                    &format!(
+                        "hackmarket fees for selling {} at {}gp :{}:{}",
+                        page.gotchi.name,
+                        price,
+                        page.gotchi.id,
+                        <Gotchi as hacksteader::Possessable>::CATEGORY as u8
+                    ),
+                )
+                .await?;
 
                 return Ok(ActionResponse::Ok(()));
             } else if let Some(Value::String(new_owner)) = values
-                .get("gotchi_gift_receiver_block")
-                .and_then(|i| i.get("gotchi_gift_receiver_input"))
+                .get("gotchi_give_receiver_block")
+                .and_then(|i| i.get("gotchi_give_receiver_input"))
                 .and_then(|s| s.get("selected_user"))
             {
                 println!(
@@ -671,7 +691,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "errors",
                         "errors": {
-                            "gotchi_gift_receiver_input": "absolutely not okay",
+                            "gotchi_give_receiver_input": "absolutely not okay",
                         }
                     }))));
                 }
@@ -679,7 +699,6 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 // update the owner in the DB
                 Hacksteader::transfer_possession(
                     &dyn_db(),
-                    user.id.clone(),
                     new_owner.clone(),
                     hacksteader::Acquisition::Trade,
                     &mut page.gotchi,
@@ -736,17 +755,12 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 .ok_or("no action name".to_string())?
                 .as_str()
             {
-                "homestead_confirm" => {
-                    banker::message(&format!(
-                        "<@{}> invoice <@{}> {} for let's homestead, fred!",
-                        *banker::ID,
-                        i.user.id,
-                        *HOMESTEAD_PRICE,
-                    ))
-                    .await
-                    .map_err(|e| format!("couldn't send Banker invoice DM: {}", e))?;
+                "hackstead_confirm" => {
+                    banker::invoice(&i.user.id, *HACKSTEAD_PRICE, "let's hackstead, fred!")
+                        .await
+                        .map_err(|e| format!("couldn't send Banker invoice DM: {}", e))?;
 
-                    mrkdwn("Check your DMs from Banker for the homesteading invoice!")
+                    mrkdwn("Check your DMs from Banker for the hacksteading invoice!")
                 }
                 "gotchi_sell" => {
                     let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
@@ -771,7 +785,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                                 }
                             }),
                             json!({ "type": "divider" }),
-                            comment("As a form of confirmation, you'll get an invoice to pay before your Gotchi goes up on the auction. \
+                            comment("As a form of confirmation, you'll get an invoice to pay before your Gotchi goes up on the market. \
                                 To fund Harvests and to encourage Hacksteaders to keep prices sensible, \
                                 this invoice is 5% of the price of your sale \
                                 rounded down to the nearest GP (meaning that sales below 20gp aren't taxed at all)."),
@@ -782,7 +796,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     .launch()
                     .await?
                 }
-                "gotchi_gift" => {
+                "gotchi_give" => {
                     let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
                     let page: GotchiPage = serde_json::from_str(&page_json)
                         .map_err(|e| dbg!(format!("couldn't parse {}: {}", page_json, e)))?;
@@ -850,6 +864,92 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     .launch()
                     .await?
                 }
+                "sale_revoke" => {
+                    let (cat, id): (hacksteader::Category, uuid::Uuid) = serde_json::from_str(&action.value).unwrap();
+                    market::take_off_market(&dyn_db(), cat, id).await?;
+
+                    json!({
+                        "response_action": "clear",
+                    })
+                }
+                "gotchi_market_page" => {
+                    let market_json = action.value;
+                    let (gotchi, sale): (Possessed<Gotchi>, market::Sale) = serde_json::from_str(&market_json).unwrap();
+
+                    let page = GotchiPage {
+                        gotchi,
+                        interactivity: Interactivity::Static
+                    };
+                    let mut blocks = page.blocks();
+
+                    blocks.push(json!({ "type": "divider" }));
+                    if hacksteader::exists(&dyn_db(), i.user.id.clone()).await {
+                        blocks.push(json!({
+                            "type": "actions",
+                            "elements": [if i.user.id == page.gotchi.steader {
+                                json!({
+                                    "type": "button",
+                                    "style": "danger",
+                                    "text": plain_text("Take off Market"),
+                                    "action_id": "sale_revoke",
+                                    "value": serde_json::to_string(&(hacksteader::Category::Gotchi, page.gotchi.id)).unwrap(),
+                                    "confirm": {
+                                        "style": "danger",
+                                        "title": plain_text("Remove from market"),
+                                        "text": plain_text(format!(
+                                            "Are you sure you want to take this {} off of the Hackmarket?",
+                                            sale.market_name
+                                        )),
+                                        "deny": plain_text("Whoops, nope"),
+                                        "confirm": plain_text("Yoink!"),
+                                    }
+                                })
+                            } else {
+                                json!({
+                                    "type": "button",
+                                    "style": "primary",
+                                    "text": plain_text(format!("Buy for {}gp", sale.price)),
+                                    "action_id": "sale_complete",
+                                    "value": market_json
+                                })
+                            }]
+                        }));
+                    } else {
+                        blocks.push(comment(
+                            "In order to buy this, you have to have a \
+                            <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>."
+                        ));
+                    }
+
+                    Modal {
+                        method: "open".to_string(),
+                        trigger_id: i.trigger_id,
+                        callback_id: page.callback_id(),
+                        blocks,
+                        title: page.gotchi.inner.nickname,
+                        private_metadata: market_json,
+                        ..Default::default()
+                    }.launch().await?
+                }
+                "sale_complete" => {
+                    let market_json = action.value;
+                    let (gotchi, sale): (Possessed<Gotchi>, market::Sale) = serde_json::from_str(&market_json).unwrap();
+
+                    banker::invoice(
+                        &i.user.id,
+                        sale.price,
+                        &format!(
+                            "hackmarket purchase buying {} at {}gp :{}:{}",
+                            gotchi.name,
+                            sale.price,
+                            gotchi.id,
+                            <Gotchi as hacksteader::Possessable>::CATEGORY as u8
+                        ),
+                    )
+                    .await?;
+
+                    json!({})
+                }
                 "gotchi_page" => {
                     let page_json = action.value;
                     let page: GotchiPage = serde_json::from_str(&page_json).unwrap();
@@ -911,6 +1011,12 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
         static ref SPAWN_POSSESSION_REGEX: regex::Regex = regex::Regex::new(
             "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?([A-z]+)"
         ).unwrap();
+        static ref MARKET_FEES_INVOICE_REGEX: regex::Regex = regex::Regex::new(
+            "hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])",
+        ).unwrap();
+        static ref MARKET_PURCHASE_REGEX: regex::Regex = regex::Regex::new(
+            "hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9])",
+        ).unwrap();
     }
 
     // TODO: clean these three mofos up
@@ -926,10 +1032,67 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
     } else if let Some(paid_invoice) =
         banker::parse_paid_invoice(&r).filter(|pi| pi.invoicer == *ID)
     {
-        println!("{} just paid an invoice", paid_invoice.invoicee);
-        Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee.clone())
-            .await
-            .map_err(|_| "Couldn't put you in the hacksteader database!")?;
+        println!("invoice {:#?} just paid", paid_invoice);
+
+        struct Sale {
+            name: String,
+            price: u64,
+            id: uuid::Uuid,
+            category: hacksteader::Category
+        }
+
+        fn captures_to_sale(captures: &regex::Captures) -> Option<Sale> {
+            Some(Sale {
+                name: captures.get(1)?.as_str().to_string(),
+                price: captures.get(2)?.as_str().parse().ok()?,
+                id: uuid::Uuid::parse_str(captures.get(3)?.as_str()).ok()?,
+                category: captures
+                    .get(4)?
+                    .as_str()
+                    .parse::<u8>()
+                    .ok()?
+                    .try_into()
+                    .ok()?,
+            })
+        }
+
+        if paid_invoice.reason == "let's hackstead, fred!" {
+            Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee.clone())
+                .await
+                .map_err(|_| "Couldn't put you in the hacksteader database!")?;
+
+            dm_blocks(paid_invoice.invoicee.clone(), vec![
+                 json!({
+                     "type": "section",
+                     "text": mrkdwn(
+                         "Congratulations, new Hacksteader! \
+                         Welcome to the community!\n\n\
+                         :house: Manage your hackstead in the home tab above\n\
+                         :harder-flex: Show anyone a snapshot of your hackstead with /hackstead\n\
+                         :sleuth_or_spy: Look up anyone else's hackstead with /hackstead @<their name>\n\
+                         :money_with_wings: Shop from the user-run hacksteaders' market with /hackmarket\n\n\
+                         You might want to start by buying some seeds there and planting them at your hackstead!"
+                     ),
+                 }),
+                 comment("LET'S HACKSTEAD, FRED!")
+            ]).await?;
+        } else if let Some(captures) = MARKET_FEES_INVOICE_REGEX.captures(&paid_invoice.reason) {
+            println!("MARKET_FEES_INVOICE_REGEX: {:#?}", captures);
+
+            if let Some(Sale { name, price, id, category }) = captures_to_sale(&captures) {
+                market::place_on_market(&dyn_db(), category, id, price, name).await?;
+            }
+        } else if let Some(captures) = MARKET_PURCHASE_REGEX.captures(&paid_invoice.reason) {
+            println!("MARKET_PURCHASE_REGEX: {:#?}", captures);
+
+            if let Some(Sale { id, category, .. }) = captures_to_sale(&captures) {
+                market::take_off_market(&dyn_db(), category, id).await?;
+                /*
+                hacksteader::transfer_possession(
+                    &dyn_db(), 
+                    paid_invoice.invoicee*/
+            }
+        }
     } else if CONFIG.special_users.contains(&r.user_id) {
         if let Some((receiver, archetype_handle)) =
             SPAWN_POSSESSION_REGEX.captures(&r.text).and_then(|c| {

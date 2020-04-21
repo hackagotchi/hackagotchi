@@ -3,6 +3,7 @@ use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DeleteItemError, DynamoDb, DynamoDbClient, PutItemError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fmt;
 use std::time::SystemTime;
 
@@ -19,7 +20,7 @@ pub type ArchetypeHandle = usize;
 
 #[derive(Deserialize, Debug)]
 pub struct GotchiArchetype {
-    pub base_happiness: usize,
+    pub base_happiness: u64,
 }
 #[derive(Deserialize, Debug)]
 pub struct SeedArchetype;
@@ -42,28 +43,63 @@ pub struct Archetype {
 // correspond 1:1 to an Archetype.
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Category {
-    Profiles=0,
-    Gotchis=1,
-    Misc=2,
-    Orders=9,
+    Profile = 0,
+    Gotchi = 1,
+    Misc = 2,
+    Sale = 9,
 }
+
+#[derive(Clone, Debug)]
+pub enum CategoryError {
+    UnknownCategory,
+    InvalidAttributeValue,
+    InvalidNumber(std::num::ParseIntError),
+}
+impl fmt::Display for CategoryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use CategoryError::*;
+
+        match self {
+            UnknownCategory => write!(f, "Unknown Category!"),
+            InvalidAttributeValue => write!(f, "AttributeValue wasn't a number!"),
+            InvalidNumber(e) => write!(f, "Couldn't parse number in AttributeValue: {}", e),
+        }
+    }
+}
+impl From<std::num::ParseIntError> for CategoryError {
+    fn from(o: std::num::ParseIntError) -> Self {
+        CategoryError::InvalidNumber(o)
+    }
+}
+
+impl std::convert::TryFrom<u8> for Category {
+    type Error = CategoryError;
+
+    fn try_from(o: u8) -> Result<Self, Self::Error> {
+        use Category::*;
+
+        Ok(match o {
+            0 => Profile,
+            1 => Gotchi,
+            2 => Misc,
+            9 => Sale,
+            _ => return Err(CategoryError::UnknownCategory),
+        })
+    }
+}
+
 impl Category {
     /*
     fn iter() -> impl ExactSizeIterator<Item = Category> {
         use Category::*;
-        [Gotchis, Profiles, Orders, Misc].iter().cloned()
+        [Profile, Gotchi, Misc, Sale].iter().cloned()
     }*/
 
-    pub fn from_av(av: &AttributeValue) -> Option<Self> {
-        use Category::*;
-
-        Some(match av.n.as_ref()?.parse().ok()? {
-            'P' => Profiles,
-            'O' => Orders,
-            'G' => Gotchis,
-            'M' => Misc,
-            _ => return None,
-        })
+    pub fn from_av(av: &AttributeValue) -> Result<Self, CategoryError> {
+        av.n.as_ref()
+            .ok_or(CategoryError::InvalidAttributeValue)?
+            .parse::<u8>()?
+            .try_into()
     }
 
     pub fn into_av(self) -> AttributeValue {
@@ -71,38 +107,6 @@ impl Category {
             n: Some((self as u8).to_string()),
             ..Default::default()
         }
-    }
-}
-
-/// A full Secondary Key in the database.
-/// There are also Secondary Keys that are simply Ps,
-/// for profiles, but no special abstraction for dealing
-/// with them is necessary.
-pub struct Sk {
-    pub owner: String,
-    pub name: String,
-    pub id: uuid::Uuid,
-}
-impl Sk {
-    pub fn to_string(self) -> String {
-        let id_string = self.id.to_string();
-        let mut s = String::with_capacity(id_string.len() + self.name.len() + self.owner.len() + 2);
-
-        s.push_str(&self.owner);
-        s.push('#');
-        s.push_str(&self.name);
-        s.push('#');
-        s.push_str(&id_string);
-        s
-    }
-    pub fn from_string(s: &str) -> Option<Sk> {
-        let mut sk_parts = s.split("#");
-
-        Some(Self {
-            owner: sk_parts.next()?.to_string(),
-            name: sk_parts.next()?.to_string(),
-            id: uuid::Uuid::parse_str(sk_parts.next()?).ok()?,
-        })
     }
 }
 
@@ -115,6 +119,14 @@ lazy_static::lazy_static! {
         serde_json::from_reader(std::io::BufReader::new(file))
             .unwrap_or_else(|e| panic!("Couldn't parse {}: {}", path, e))
     };
+}
+
+pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
+    db.get_item(rusoto_dynamodb::GetItemInput { 
+        key: HacksteaderProfile::new(user_id).empty_item(),
+        table_name: TABLE_NAME.to_string(),
+        ..Default::default()
+    }).await.map(|x| x.item.is_some()).unwrap_or(false)
 }
 
 pub struct Hacksteader {
@@ -131,7 +143,7 @@ impl Hacksteader {
     ) -> Result<(), RusotoError<PutItemError>> {
         // just give them a profile for now
         db.put_item(rusoto_dynamodb::PutItemInput {
-            item: HacksteaderProfile::new().item(user_id),
+            item: HacksteaderProfile::new(user_id).item(),
             table_name: TABLE_NAME.to_string(),
             ..Default::default()
         })
@@ -176,8 +188,10 @@ impl Hacksteader {
         user_id: String,
         possession: &Possessed<P>,
     ) -> Result<(), RusotoError<PutItemError>> {
+        let mut new_poss = possession.clone();
+        new_poss.steader = user_id;
         db.put_item(rusoto_dynamodb::PutItemInput {
-            item: possession.item(user_id),
+            item: possession.item(),
             table_name: TABLE_NAME.to_string(),
             ..Default::default()
         })
@@ -185,13 +199,13 @@ impl Hacksteader {
         .map(|_| ())
     }
 
-    pub async fn take_possession<P: Possessable>(
+    #[allow(dead_code)]
+    pub async fn delete_possession<P: Possessable>(
         db: &DynamoDbClient,
-        user_id: String,
         possession: &Possessed<P>,
     ) -> Result<(), RusotoError<DeleteItemError>> {
         db.delete_item(rusoto_dynamodb::DeleteItemInput {
-            key: possession.empty_item(user_id),
+            key: possession.empty_item(),
             table_name: TABLE_NAME.to_string(),
             ..Default::default()
         })
@@ -201,7 +215,6 @@ impl Hacksteader {
 
     pub async fn transfer_possession<P: Possessable>(
         db: &DynamoDbClient,
-        old_owner: String,
         new_owner: String,
         acquisition: Acquisition,
         possession: &mut Possessed<P>,
@@ -212,52 +225,55 @@ impl Hacksteader {
             acquisition,
         });
 
-        // take from the rich
-        Self::take_possession(db, old_owner, possession)
-            .await
-            .map_err(|e| {
-                dbg!(format!(
-                    "Couldn't take to transfer ownership in database: {}",
-                    e
-                ))
-            })?;
+        db.update_item(rusoto_dynamodb::UpdateItemInput {
+            table_name: TABLE_NAME.to_string(),
+            key: possession.empty_item(),
+            update_expression: Some("SET steader = :new_owner".to_string()),
+            expression_attribute_values: Some(
+                [(
+                    ":new_owner".to_string(),
+                    AttributeValue {
+                        s: Some(new_owner),
+                        ..Default::default()
+                    },
+                )]
+                .iter()
+                .cloned()
+                .collect(),
+            ),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| format!("Couldn't transfer ownership in database: {}", e))?;
 
-        // give to the poor
-        Self::give_possession(db, new_owner, possession)
-            .await
-            .map_err(|e| {
-                dbg!(format!(
-                    "Couldn't give to transfer ownership in database: {}",
-                    e
-                ))
-            })
+        Ok(())
     }
 
     pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Option<Self> {
         let query = db
             .query(rusoto_dynamodb::QueryInput {
                 table_name: TABLE_NAME.to_string(),
-                key_condition_expression: Some("cat between :min_cat and :max_cat and sk = :db_id".to_string()),
+                key_condition_expression: Some("steader = :steader_id".to_string()),
+                index_name: Some("steader_index".to_string()),
                 expression_attribute_values: Some({
-                    [
-                        (":db_id".to_string(), AttributeValue {
+                    [(
+                        ":steader_id".to_string(),
+                        AttributeValue {
                             s: Some(user_id.clone()),
                             ..Default::default()
-                        }),
-                        (":min_cat".to_string(), Category::Profiles.into_av()),
-                        (":max_cat".to_string(), AttributeValue {
-                            n: Some(((Category::Orders as usize) - 1).to_string()),
-                            ..Default::default()
-                        })
-                    ]
-                        .iter()
-                        .cloned()
-                        .collect()
+                        },
+                    )]
+                    .iter()
+                    .cloned()
+                    .collect()
                 }),
                 ..Default::default()
             })
             .await;
-        let items = query.map_err(|e| println!("couldn't profile query: {}", e)).ok()?.items?;
+        let items = query
+            .map_err(|e| println!("couldn't profile query: {}", e))
+            .ok()?
+            .items?;
 
         let mut profile = None;
         let mut gotchis = Vec::new();
@@ -265,9 +281,9 @@ impl Hacksteader {
 
         for item in items.iter() {
             (|| -> Option<()> {
-                match Category::from_av(item.get("cat")?)? {
-                    Category::Profiles => profile = Some(HacksteaderProfile::from_item(item)?),
-                    Category::Gotchis => gotchis.push(Possessed::from_item(item)?),
+                match Category::from_av(item.get("cat")?).ok()? {
+                    Category::Profile => profile = Some(HacksteaderProfile::from_item(item)?),
+                    Category::Gotchi => gotchis.push(Possessed::from_item(item)?),
                     Category::Misc => seeds.push(Possessed::from_item(item)?),
                     _ => unreachable!(),
                 }
@@ -327,7 +343,7 @@ archetype_deref!(Gotchi);
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct GotchiHarvestOwner {
     pub id: String,
-    pub harvested: usize,
+    pub harvested: u64,
 }
 impl GotchiHarvestOwner {
     fn from_item(item: &Item) -> Option<Self> {
@@ -367,7 +383,7 @@ impl Into<AttributeValue> for GotchiHarvestOwner {
 }
 impl Possessable for Gotchi {
     type A = GotchiArchetype;
-    const CATEGORY: Category = Category::Gotchis;
+    const CATEGORY: Category = Category::Gotchi;
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
         Self {
             archetype_handle,
@@ -703,7 +719,8 @@ fn acquisition_serialize() {
 pub struct Possessed<P: Possessable> {
     pub inner: P,
     pub archetype_handle: ArchetypeHandle,
-    id: uuid::Uuid,
+    pub id: uuid::Uuid,
+    pub steader: String,
     pub ownership_log: Vec<Owner>,
 }
 
@@ -721,6 +738,7 @@ impl<P: Possessable> Possessed<P> {
             inner: P::new(archetype_handle, &owner.id),
             id: uuid::Uuid::new_v4(),
             archetype_handle,
+            steader: owner.id.clone(),
             ownership_log: vec![owner],
         }
     }
@@ -732,31 +750,31 @@ impl<P: Possessable> Possessed<P> {
             .expect("invalid archetype handle")
     }
 
-    pub fn sk(&self) -> String {
-        Sk {
-            id: self.id,
-            owner: self.ownership_log.last().unwrap().id.clone(),
-            name: self.name.clone(),
-        }
-        .to_string()
-    }
-
-    pub fn empty_item(&self, slack_id: String) -> Item {
+    pub fn empty_item(&self) -> Item {
         [
+            (
+                "id".to_string(),
+                AttributeValue {
+                    s: Some(self.id.to_string()),
+                    ..Default::default()
+                },
+            ),
             ("cat".to_string(), P::CATEGORY.into_av()),
-            ("sk".to_string(), AttributeValue {
-                s: Some(format!("{}#{}#{}", slack_id, self.name, self.id.to_string())),
-                ..Default::default()
-            })
         ]
-            .iter()
-            .cloned()
-            .collect()
-
+        .iter()
+        .cloned()
+        .collect()
     }
 
-    fn item(&self, slack_id: String) -> Item {
-        let mut m = self.empty_item(slack_id);
+    fn item(&self) -> Item {
+        let mut m = self.empty_item();
+        m.insert(
+            "steader".to_string(),
+            AttributeValue {
+                s: Some(self.steader.clone()),
+                ..Default::default()
+            },
+        );
         m.insert(
             "ownership_log".to_string(),
             AttributeValue {
@@ -782,21 +800,26 @@ impl<P: Possessable> Possessed<P> {
     }
 
     pub fn from_item(item: &Item) -> Option<Self> {
-        println!("parsing item into Possessable");
-        let Sk { id, owner, .. } = Sk::from_string(&item.get("sk")?.s.as_ref()?)?;
-        println!("parsed sk");
-        let category = Category::from_av(item.get("cat")?)?;
-        println!("parsed category");
+        println!("parsing possession: {:?}", item);
+        let steader = item.get("steader")?.s.as_ref()?.clone();
+        println!("steader parsed");
+        let id = uuid::Uuid::parse_str(item.get("id")?.s.as_ref()?).ok()?;
+        println!("id parsed");
+        let category = Category::from_av(item.get("cat")?).ok()?;
+        println!("category parsed");
 
         // make sure this is the right category of item
         if P::CATEGORY == category {
+            println!("right category");
             let archetype_handle = item.get("archetype_handle")?.n.as_ref()?.parse().ok()?;
             println!("parsed archetype handle");
 
-            let mut inner = P::new(archetype_handle, &owner);
+            let mut inner = P::new(archetype_handle, &steader);
             inner.fill_from_item(item);
+            println!("parsed inner");
 
             Some(Self {
+                steader,
                 inner,
                 archetype_handle,
                 id,
@@ -837,34 +860,44 @@ fn possessed_gotchi_serialize() {
 pub struct HacksteaderProfile {
     /// Indicates when this Hacksteader first joined the elite community.
     pub joined: SystemTime,
+    /// This is actually the steader id of the person who owns this Profile
+    pub id: String,
 }
 impl HacksteaderProfile {
-    pub fn new() -> Self {
+    pub fn new(owner_id: String) -> Self {
         Self {
             joined: SystemTime::now(),
+            id: owner_id,
         }
     }
 
     /// Returns an empty profile Item for the given slack ID.
     /// Useful for searching for a given slack user's Hacksteader profile
-    fn empty_item(user_id: String) -> Item {
+    fn empty_item(&self) -> Item {
         [
-            ("cat".to_string(), Category::Profiles.into_av()),
             (
-                "sk".to_string(),
+                "id".to_string(),
                 AttributeValue {
-                    s: Some(user_id),
+                    s: Some(self.id.clone()),
                     ..Default::default()
                 },
-            )
+            ),
+            ("cat".to_string(), Category::Profile.into_av()),
         ]
         .iter()
         .cloned()
         .collect()
     }
 
-    pub fn item(&self, user_id: String) -> Item {
-        let mut m = Self::empty_item(user_id.clone());
+    pub fn item(&self) -> Item {
+        let mut m = self.empty_item();
+        m.insert(
+            "steader".to_string(),
+            AttributeValue {
+                s: Some(self.id.clone()),
+                ..Default::default()
+            },
+        );
         m.insert(
             "joined".to_string(),
             AttributeValue {
@@ -877,11 +910,11 @@ impl HacksteaderProfile {
 
     pub fn from_item(item: &Item) -> Option<Self> {
         Some(Self {
+            id: item.get("id")?.s.as_ref()?.clone(),
             joined: item
                 .get("joined")
                 .and_then(|a| a.s.as_ref())
-                .and_then(|s| parse_rfc3339(s).ok())
-                .unwrap_or_else(|| SystemTime::now()),
+                .and_then(|s| parse_rfc3339(s).ok())?,
         })
     }
 }
