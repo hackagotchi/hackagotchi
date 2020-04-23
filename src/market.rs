@@ -1,14 +1,25 @@
 use super::hacksteader;
-use hacksteader::{Category, Possessed, Gotchi};
+use hacksteader::{Category, Gotchi, Possessed};
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Sale {
     pub price: u64,
     pub market_name: String,
 }
+impl Sale {
+    pub fn from_item(i: &hacksteader::Item) -> Option<Self> {
+        Some(Sale {
+            market_name: i.get("market_name")?.s.as_ref()?.clone(),
+            price: i.get("price")?.n.as_ref()?.parse().ok()?,
+        })
+    }
+}
 
-pub async fn market_search(db: &DynamoDbClient, cat: Category) -> Option<Vec<(Possessed<Gotchi>, Sale)>> {
+pub async fn market_search(
+    db: &DynamoDbClient,
+    cat: Category,
+) -> Option<Vec<(Possessed<Gotchi>, Sale)>> {
     let query = db
         .query(rusoto_dynamodb::QueryInput {
             table_name: hacksteader::TABLE_NAME.to_string(),
@@ -18,24 +29,25 @@ pub async fn market_search(db: &DynamoDbClient, cat: Category) -> Option<Vec<(Po
                 [(":sale_cat".to_string(), cat.into_av())]
                     .iter()
                     .cloned()
-                    .collect()
+                    .collect(),
             ),
             ..Default::default()
         })
         .await;
 
     Some(
-        dbg!(query
+        query
             .map_err(|e| dbg!(format!("Couldn't search market: {}", e)))
             .ok()?
-            .items)?
+            .items?
             .iter_mut()
-            .filter_map(|i| Some((Possessed::from_item(i)?, Sale {
-                market_name: i.remove("market_name")?.s?,
-                price: i.remove("price")?.n?.parse().ok()?
-            })))
-            .collect(),
-    )
+            .filter_map(|i| {
+                let mut gotchi = Possessed::<Gotchi>::from_item(i)?;
+                let sale = gotchi.sale.take()?;
+                Some((gotchi, sale))
+            })
+            .collect()
+     )
 }
 
 pub async fn place_on_market(
@@ -75,8 +87,8 @@ pub async fn place_on_market(
                     AttributeValue {
                         s: Some(name),
                         ..Default::default()
-                    }
-                )
+                    },
+                ),
             ]
             .iter()
             .cloned()

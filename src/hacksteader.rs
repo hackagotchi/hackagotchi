@@ -2,12 +2,13 @@ use humantime::{format_rfc3339, parse_rfc3339};
 use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DeleteItemError, DynamoDb, DynamoDbClient, PutItemError};
 use serde::{Deserialize, Serialize};
+use super::market;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt;
 use std::time::SystemTime;
 
-type Item = HashMap<String, AttributeValue>;
+pub type Item = HashMap<String, AttributeValue>;
 
 pub const TABLE_NAME: &'static str = "hackagotchi";
 
@@ -122,11 +123,14 @@ lazy_static::lazy_static! {
 }
 
 pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
-    db.get_item(rusoto_dynamodb::GetItemInput { 
+    db.get_item(rusoto_dynamodb::GetItemInput {
         key: HacksteaderProfile::new(user_id).empty_item(),
         table_name: TABLE_NAME.to_string(),
         ..Default::default()
-    }).await.map(|x| x.item.is_some()).unwrap_or(false)
+    })
+    .await
+    .map(|x| x.item.is_some())
+    .unwrap_or(false)
 }
 
 pub struct Hacksteader {
@@ -632,7 +636,7 @@ fn owner_serialize() {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Acquisition {
     Trade,
-    Purchase { price: usize },
+    Purchase { price: u64 },
 }
 impl Acquisition {
     fn from_item(item: &Item) -> Option<Self> {
@@ -722,6 +726,7 @@ pub struct Possessed<P: Possessable> {
     pub id: uuid::Uuid,
     pub steader: String,
     pub ownership_log: Vec<Owner>,
+    pub sale: Option<market::Sale>
 }
 
 impl<P: Possessable> std::ops::Deref for Possessed<P> {
@@ -740,6 +745,7 @@ impl<P: Possessable> Possessed<P> {
             archetype_handle,
             steader: owner.id.clone(),
             ownership_log: vec![owner],
+            sale: None
         }
     }
 
@@ -830,6 +836,7 @@ impl<P: Possessable> Possessed<P> {
                     .iter()
                     .map(|x| Owner::from_item(x.m.as_ref()?))
                     .collect::<Option<_>>()?,
+                sale: market::Sale::from_item(item)
             })
         } else {
             None

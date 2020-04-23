@@ -1,4 +1,4 @@
-use super::{Reply, TOKEN};
+use super::{Message, TOKEN};
 use regex::Regex;
 use std::env::var;
 
@@ -12,7 +12,7 @@ pub struct PaidInvoice {
 
 lazy_static::lazy_static! {
     pub static ref ID: String = var("BANKER_ID").unwrap();
-    static ref CHAT_ID: String = var("BANKER_CHAT").unwrap();
+    pub static ref CHAT_ID: String = var("BANKER_CHAT").unwrap();
     static ref PAID_INVOICE_MSG_REGEX: Regex = Regex::new(
         "<@([A-z|0-9]+)> paid their invoice of ([0-9]+) gp from <@([A-z|0-9]+)> for \"(.+)\"."
     ).unwrap();
@@ -20,7 +20,7 @@ lazy_static::lazy_static! {
 
 /// Takes a threaded reply, returns `Some` if that threaded reply contains
 /// an invoice payment confirmation message
-pub fn parse_paid_invoice(msg: &Reply) -> Option<PaidInvoice> {
+pub fn parse_paid_invoice(msg: &Message) -> Option<PaidInvoice> {
     if msg.channel == *CHAT_ID && msg.user_id == *ID {
         let caps = dbg!(PAID_INVOICE_MSG_REGEX.captures(&msg.text))?;
         return Some(PaidInvoice {
@@ -33,13 +33,13 @@ pub fn parse_paid_invoice(msg: &Reply) -> Option<PaidInvoice> {
     None
 }
 
-pub async fn message(msg: &str) -> reqwest::Result<()> {
+pub async fn message(msg: String) -> reqwest::Result<()> {
     let client = reqwest::Client::new();
     client
         .post("https://slack.com/api/chat.postMessage")
         .form(&[
-            ("token", TOKEN.as_str()),
-            ("channel", CHAT_ID.as_str()),
+            ("token", TOKEN.clone()),
+            ("channel", CHAT_ID.clone()),
             ("text", msg),
         ])
         .send()
@@ -48,10 +48,16 @@ pub async fn message(msg: &str) -> reqwest::Result<()> {
 }
 
 pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String> {
-    message(&format!(
+    message(format!(
         "<@{}> invoice <@{}> {} for {}",
         *ID, user, amount, reason
     ))
     .await
     .map_err(|e| format!("Couldn't request invoice: {}", e))
+}
+
+pub async fn balance() -> Result<(), String> {
+    message(format!("<@{}> balance", *ID))
+        .await
+        .map_err(|e| format!("Couldn't request balance: {}", e))
 }
