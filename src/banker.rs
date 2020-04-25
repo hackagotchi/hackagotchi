@@ -33,7 +33,7 @@ pub fn parse_paid_invoice(msg: &Message) -> Option<PaidInvoice> {
     None
 }
 
-pub async fn message(msg: String) -> reqwest::Result<()> {
+pub async fn message(msg: String) -> Result<(), String> {
     let client = reqwest::Client::new();
     client
         .post("https://slack.com/api/chat.postMessage")
@@ -43,7 +43,8 @@ pub async fn message(msg: String) -> reqwest::Result<()> {
             ("text", msg),
         ])
         .send()
-        .await?;
+        .await
+        .map_err(|e| format!("Couldn't message banker: {}", e))?;
     Ok(())
 }
 
@@ -54,6 +55,15 @@ pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String
     ))
     .await
     .map_err(|e| format!("Couldn't request invoice: {}", e))
+}
+
+pub async fn pay(user: String, amount: u64, reason: String) -> Result<(), String> {
+    message(format!(
+        "<@{}> give <@{}> {} for {}",
+        *ID, user, amount, reason
+    ))
+    .await
+    .map_err(|e| format!("Couldn't complete payment: {}", e))
 }
 
 pub async fn balance() -> Result<(), String> {

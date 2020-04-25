@@ -1,5 +1,6 @@
 #![feature(decl_macro)]
 #![feature(proc_macro_hygiene)]
+#![recursion_limit="512"]
 use rocket::request::LenientForm;
 use rocket::{post, routes, FromForm};
 use rocket_contrib::json::Json;
@@ -194,7 +195,7 @@ impl GotchiPage {
                 .map(|x| x.harvested)
                 .sum::<u64>(),
         )));
-        for owner in gotchi.inner.harvest_log.iter() {
+        for owner in gotchi.inner.harvest_log.iter().rev() {
             blocks.push(comment(format!(
                 "{}gp harvested for <@{}>",
                 owner.harvested, owner.id
@@ -686,11 +687,12 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                             &user.id,
                             sale.price,
                             &format!(
-                                "hackmarket purchase buying {} at {}gp :{}:{}",
+                                "hackmarket purchase buying {} at {}gp :{}:{} from <@{}>",
                                 page.gotchi.name,
                                 sale.price,
                                 page.gotchi.id,
-                                <Gotchi as hacksteader::Possessable>::CATEGORY as u8
+                                <Gotchi as hacksteader::Possessable>::CATEGORY as u8,
+                                page.gotchi.steader,
                             ),
                         )
                         .await?;
@@ -1031,7 +1033,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             "hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])",
         ).unwrap();
         static ref MARKET_PURCHASE_REGEX: regex::Regex = regex::Regex::new(
-            "hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9])",
+            "hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9]) from <@([A-z|0-9]+)>",
         ).unwrap();
         static ref BALANCE_REPORT_REGEX: regex::Regex = regex::Regex::new(
             "You have ([0-9]+)gp in your account, sirrah."
@@ -1058,6 +1060,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             price: u64,
             id: uuid::Uuid,
             category: hacksteader::Category,
+            from: Option<String>
         }
 
         fn captures_to_sale(captures: &regex::Captures) -> Option<Sale> {
@@ -1072,6 +1075,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                     .ok()?
                     .try_into()
                     .ok()?,
+                from: captures.get(5).map(|x| x.as_str().to_string())
             })
         }
 
@@ -1103,51 +1107,73 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                 price,
                 id,
                 category,
+                ..
             }) = captures_to_sale(&captures)
             {
                 market::place_on_market(&dyn_db(), category, id, price, name).await?;
             }
         } else if let Some(captures) = MARKET_PURCHASE_REGEX.captures(&paid_invoice.reason) {
+            use futures::future::TryFutureExt;
             println!("MARKET_PURCHASE_REGEX: {:#?}", captures);
 
-            if let Some(Sale { id, category, .. }) = captures_to_sale(&captures) {
-                dyn_db().update_item(rusoto_dynamodb::UpdateItemInput {
-                    key: [
-                        ("cat".to_string(), category.into_av()),
-                        (
-                            "id".to_string(),
-                            AttributeValue {
-                                s: Some(id.to_string()),
+            if let Some(Sale { id, category, name, price, from: Some(seller) }) = captures_to_sale(&captures) {
+                let paid_for = format!("sale of your {}", name);
+                let db = dyn_db();
+                futures::try_join!(
+                    db.update_item(rusoto_dynamodb::UpdateItemInput {
+                        key: [
+                            ("cat".to_string(), category.into_av()),
+                            (
+                                "id".to_string(),
+                                AttributeValue {
+                                    s: Some(id.to_string()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                        expression_attribute_values: Some([
+                            (":new_owner".to_string(), AttributeValue {
+                                s: Some(paid_invoice.invoicee.clone()),
                                 ..Default::default()
-                            },
-                        ),
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect(),
-                    expression_attribute_values: Some([
-                        (":new_owner".to_string(), AttributeValue {
-                            s: Some(paid_invoice.invoicee.clone()),
-                            ..Default::default()
+                            }),
+                            (":ownership_entry".to_string(), AttributeValue {
+                                l: Some(vec![hacksteader::Owner {
+                                    id: paid_invoice.invoicee.clone(),
+                                    acquisition: hacksteader::Acquisition::Purchase {
+                                        price: paid_invoice.amount,
+                                    }
+                                }.into()]),
+                                ..Default::default()
+                            })
+                        ].iter().cloned().collect()),
+                        update_expression: Some(concat!(
+                            "REMOVE price, market_name ",
+                            "SET steader = :new_owner, ownership_log = list_append(ownership_log, :ownership_entry)"
+                        ).to_string()),
+                        table_name: hacksteader::TABLE_NAME.to_string(),
+                        ..Default::default()
+                    }).map_err(|e| format!("database err: {}", e)),
+                    banker::pay(seller.clone(), price, paid_for),
+                    dm_blocks(seller.clone(), vec![
+                        json!({
+                            "type": "section",
+                            "text": mrkdwn(format!(
+                                "The sale of your *{}* has gone through! \
+                                <@{}> made the purchase on hackmarket, earning you *{} GP*!",
+                                name, paid_invoice.invoicee, price
+                            )),
+                            "accessory": {
+                                "type": "image",
+                                "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, name.to_lowercase()),
+                                "alt_text": "Hackpheus sitting on bags of money!",
+                            }
                         }),
-                        (":ownership_entry".to_string(), AttributeValue {
-                            l: Some(vec![hacksteader::Owner {
-                                id: paid_invoice.invoicee.clone(),
-                                acquisition: hacksteader::Acquisition::Purchase {
-                                    price: paid_invoice.amount,
-                                }
-                            }.into()]),
-                            ..Default::default()
-                        })
-                    ].iter().cloned().collect()),
-                    update_expression: Some(concat!(
-                        "REMOVE price, market_name ",
-                        "SET steader = :new_owner, ownership_log = list_append(ownership_log, :ownership_entry)"
-                    ).to_string()),
-                    table_name: hacksteader::TABLE_NAME.to_string(),
-                    ..Default::default()
-                })
-                .await
+                        comment("BRUH UR LIKE ROLLING IN CASH"),
+                    ])
+                )
                 .map_err(|e| dbg!(format!("Couldn't complete sale of {}: {}", id, e)))?;
             }
         }
@@ -1158,6 +1184,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
         .and_then(|x| x.get(1))
         .and_then(|x| x.as_str().parse::<u64>().ok())
     {
+        use futures::future::TryFutureExt;
         use futures::stream::{self, TryStreamExt, StreamExt};
         println!("I got {} problems and GP ain't one", balance);
 
@@ -1188,22 +1215,86 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             .ok_or("error parsing gotchis")?;
 
         let total_happiness: u64 = gotchis.iter().map(|x| x.inner.base_happiness).sum();
-        println!("total happiness: {}", total_happiness);
+        let mut funds_awarded = 0;
 
-        stream::iter(gotchis).map(|x| Ok(x)).try_for_each_concurrent(None, |gotchi| {
-            banker::message(format!(
-                "<@{}> gets {} for his {}",
-                gotchi.steader,
-                gotchi.inner.base_happiness,
-                gotchi.inner.nickname
-            ))
-        })
-        .await
-        .map_err(|e| format!("msg send err: {}", e))?;
+        for _ in 0..balance/total_happiness {
+            stream::iter(gotchis.clone()).map(|x| Ok(x)).try_for_each_concurrent(None, |gotchi| {
+                let dm = vec![
+                    json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            "_It's free GP time, ladies and gentlegotchis!_\n\n\
+                            It seems your lovely Gotchi *{}* has collected *{} GP* for you!",
+                            gotchi.inner.nickname,
+                            gotchi.inner.base_happiness
+                        )),
+                        "accessory": {
+                            "type": "image",
+                            "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
+                            "alt_text": "Hackpheus holding a Gift!",
+                        }
+                    }),
+                    comment("IN HACK WE STEAD")
+                ];
+                let payment_note = format!(
+                    "{} collected {} GP for you",
+                    gotchi.inner.nickname,
+                    gotchi.inner.base_happiness,
+                );
+                let steader_in_harvest_log: bool = gotchi.inner.harvest_log.last().filter(|x| x.id == gotchi.steader).is_some();
+                let db_update = rusoto_dynamodb::UpdateItemInput {
+                    table_name: hacksteader::TABLE_NAME.to_string(),
+                    key: gotchi.empty_item(),
+                    update_expression: Some(if steader_in_harvest_log {
+                        format!("ADD harvest_log[{}].harvested :harv", gotchi.inner.harvest_log.len() - 1)
+                    } else {
+                        "SET harvest_log = list_append(harvest_log, :harv)".to_string()
+                    }),
+                    expression_attribute_values: Some(
+                        [(
+                            ":harv".to_string(),
+                            if steader_in_harvest_log {
+                                AttributeValue {
+                                    n: Some(gotchi.inner.base_happiness.to_string()),
+                                    ..Default::default()
+                                }
+                            } else {
+                                AttributeValue {
+                                    l: Some(vec![hacksteader::GotchiHarvestOwner {
+                                        id: gotchi.steader.clone(),
+                                        harvested: gotchi.inner.base_happiness,
+                                    }.into()]),
+                                    ..Default::default()
+                                }
+                            }
+                        )]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                };
+                let db = dyn_db();
 
-        /*
-        for i in 0..balance/total_happiness {
-        }*/
+                async move {
+                    futures::try_join!(
+                        dm_blocks(gotchi.steader.clone(), dm),
+                        banker::pay(gotchi.steader.clone(), gotchi.inner.base_happiness, payment_note),
+                        db.update_item(db_update).map_err(|e| format!("Couldn't update owner log: {}", e))
+                    )?;
+                    Ok(())
+                }
+            })
+            .await
+            .map_err(|e: String| format!("harvest msg send err: {}", e))?;
+
+            funds_awarded += total_happiness;
+        }
+
+        futures::try_join!(
+            banker::message(format!("{} GP earned this harvest!", funds_awarded)),
+            banker::message(format!("total happiness: {}", total_happiness)),
+        )?;
 
     } else if CONFIG.special_users.contains(&r.user_id) {
         if let Some((receiver, archetype_handle)) =
