@@ -303,47 +303,49 @@ impl Hacksteader {
         })
     }
 }
-
-pub trait Possessable: std::ops::Deref + std::fmt::Debug + PartialEq + Clone + Sized {
-    /// The archetype that corresponds to this Possessable
-    type A;
-
-    /// A char used in the ids that this Possessable serializes into in the database.
-    const CATEGORY: Category;
-
-    fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self;
-    fn archetype_handle(&self) -> ArchetypeHandle;
-    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A>;
-    fn fill_from_item(&mut self, item: &Item) -> Option<()>;
-    fn write_item(&self, item: &mut Item);
+#[derive(Debug, PartialEq, Clone)]
+pub enum PossessionKind {
+    Gotchi(Gotchi),
+    Seed(Seed),
+    Keepsake(Keepsake),
 }
-
-macro_rules! archetype_deref {
-    ( $p:ident ) => {
-        impl std::ops::Deref for $p {
-            type Target = <Self as Possessable>::A;
-
-            fn deref(&self) -> &Self::Target {
-                Self::archetype_kind(
-                    &CONFIG
-                        .archetypes
-                        .get(self.archetype_handle())
-                        .expect("invalid archetype handle")
-                        .kind,
-                )
-                .expect("archetype kind did not match instance kind")
-            }
+impl PossessionKind {
+    fn category(&self) -> Category {
+        match self {
+            Gotchi(_) => Category::Gotchi,
+            _ => Category::Misc
         }
-    };
+    }
+    fn new(ah: ArchetypeHandle, owner_id: &str) -> Self {
+        match CONFIG.archetypes.get(ah).unwrap_or_else(|e| panic!("Unknown archetype: {}", e)).kind {
+            ArchetypeKind::Gotchi(_) => PossessionKind::Gotchi(Gotchi::new(ah, owner_id)),
+            ArchetypeKind::Seed(_) => PossessionKind::Seed(Seed::new(ah, owner_id)),
+            ArchetypeKind::Keepsake(_) => PossessionKind::Keepsake(Keepsake::new(ah, owner_id)),
+        }
+    }
+    fn archetype_handle(&self) -> ArchetypeHandle {
+        match self {
+            Gotchi(g) => g.archetype_handle,
+            Seed(s) => s.archetype_handle,
+            Keepsake(k) => k.archetype_handle,
+        }
+    }
+    fn fill_from_item(&mut self, item: &Item) -> {
+        match self {
+            ArchetypeKind::Gotchi(g) => g.fill_from_item(item),
+            ArchetypeKind::Seed(s) => s.fill_from_item(item),
+            ArchetypeKind::Keepsake(k) => k.fill_from_item(item),
+        }
+    }
+    fn write_item(&self, item: &mut Item) -> {
+        match self {
+            ArchetypeKind::Gotchi(g) => g.write_item(item),
+            ArchetypeKind::Seed(s) => s.write_item(item),
+            ArchetypeKind::Keepsake(k) => k.write_item(item),
+        }
+    }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
-pub struct Gotchi {
-    archetype_handle: ArchetypeHandle,
-    pub nickname: String,
-    pub harvest_log: Vec<GotchiHarvestOwner>,
-}
-archetype_deref!(Gotchi);
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct GotchiHarvestOwner {
     pub id: String,
@@ -385,9 +387,14 @@ impl Into<AttributeValue> for GotchiHarvestOwner {
         }
     }
 }
-impl Possessable for Gotchi {
-    type A = GotchiArchetype;
-    const CATEGORY: Category = Category::Gotchi;
+
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct Gotchi {
+    archetype_handle: ArchetypeHandle,
+    pub nickname: String,
+    pub harvest_log: Vec<GotchiHarvestOwner>,
+}
+impl Gotchi {
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
         Self {
             archetype_handle,
@@ -397,15 +404,6 @@ impl Possessable for Gotchi {
                 harvested: 0,
             }],
         }
-    }
-    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
-        match a {
-            ArchetypeKind::Gotchi(ga) => Some(ga),
-            _ => None,
-        }
-    }
-    fn archetype_handle(&self) -> ArchetypeHandle {
-        self.archetype_handle
     }
     fn fill_from_item(&mut self, item: &Item) -> Option<()> {
         self.nickname = item.get("nickname")?.s.as_ref()?.clone();
@@ -441,6 +439,46 @@ impl Possessable for Gotchi {
             },
         );
     }
+}
+impl Seed {
+    fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
+        Self {
+            archetype_handle,
+            pedigree: vec![SeedGrower {
+                id: owner_id.to_string(),
+                generations: 0,
+            }],
+        }
+    }
+    fn fill_from_item(&mut self, item: &Item) -> Option<()> {
+        self.pedigree = item
+            .get("pedigree")?
+            .l
+            .as_ref()?
+            .iter()
+            .filter_map(|v| SeedGrower::from_item(v.m.as_ref()?))
+            .collect();
+
+        Some(())
+    }
+    fn write_item(&self, item: &mut Item) {
+        item.insert(
+            "pedigree".to_string(),
+            AttributeValue {
+                l: Some(self.pedigree.iter().cloned().map(|sg| sg.into()).collect()),
+                ..Default::default()
+            },
+        );
+    }
+}
+impl Keepsake {
+    fn new(archetype_handle: ArchetypeHandle, _owner_id: &str) -> Self {
+        Self { archetype_handle }
+    }
+    fn fill_from_item(&mut self, _item: &Item) -> Option<()> {
+        Some(())
+    }
+    fn write_item(&self, _item: &mut Item) {}
 }
 #[test]
 fn gotchi_serialize() {
@@ -511,75 +549,12 @@ impl Into<AttributeValue> for SeedGrower {
         }
     }
 }
-impl Possessable for Seed {
-    type A = SeedArchetype;
-    const CATEGORY: Category = Category::Misc;
-    fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
-        Self {
-            archetype_handle,
-            pedigree: vec![SeedGrower {
-                id: owner_id.to_string(),
-                generations: 0,
-            }],
-        }
-    }
-    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
-        match a {
-            ArchetypeKind::Seed(sa) => Some(sa),
-            _ => None,
-        }
-    }
-    fn archetype_handle(&self) -> ArchetypeHandle {
-        self.archetype_handle
-    }
-    fn fill_from_item(&mut self, item: &Item) -> Option<()> {
-        self.pedigree = item
-            .get("pedigree")?
-            .l
-            .as_ref()?
-            .iter()
-            .filter_map(|v| SeedGrower::from_item(v.m.as_ref()?))
-            .collect();
-
-        Some(())
-    }
-    fn write_item(&self, item: &mut Item) {
-        item.insert(
-            "pedigree".to_string(),
-            AttributeValue {
-                l: Some(self.pedigree.iter().cloned().map(|sg| sg.into()).collect()),
-                ..Default::default()
-            },
-        );
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Keepsake {
     archetype_handle: ArchetypeHandle,
 }
 archetype_deref!(Keepsake);
-impl Possessable for Keepsake {
-    type A = KeepsakeArchetype;
-    const CATEGORY: Category = Category::Misc;
-
-    fn new(archetype_handle: ArchetypeHandle, _owner_id: &str) -> Self {
-        Self { archetype_handle }
-    }
-    fn archetype_kind(a: &ArchetypeKind) -> Option<&Self::A> {
-        match a {
-            ArchetypeKind::Keepsake(ka) => Some(ka),
-            _ => None,
-        }
-    }
-    fn archetype_handle(&self) -> ArchetypeHandle {
-        self.archetype_handle
-    }
-    fn fill_from_item(&mut self, _item: &Item) -> Option<()> {
-        Some(())
-    }
-    fn write_item(&self, _item: &mut Item) {}
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Owner {
@@ -720,8 +695,8 @@ fn acquisition_serialize() {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-pub struct Possessed<P: Possessable> {
-    pub inner: P,
+pub struct Possession {
+    pub kind: PossessionKind,
     pub archetype_handle: ArchetypeHandle,
     pub id: uuid::Uuid,
     pub steader: String,
@@ -729,7 +704,7 @@ pub struct Possessed<P: Possessable> {
     pub sale: Option<market::Sale>
 }
 
-impl<P: Possessable> std::ops::Deref for Possessed<P> {
+impl std::ops::Deref for Possessed {
     type Target = Archetype;
 
     fn deref(&self) -> &Self::Target {
@@ -740,7 +715,7 @@ impl<P: Possessable> std::ops::Deref for Possessed<P> {
 impl<P: Possessable> Possessed<P> {
     pub fn new(archetype_handle: ArchetypeHandle, owner: Owner) -> Self {
         Self {
-            inner: P::new(archetype_handle, &owner.id),
+            inner: PossessionKind::new(archetype_handle, &owner.id),
             id: uuid::Uuid::new_v4(),
             archetype_handle,
             steader: owner.id.clone(),
@@ -847,7 +822,7 @@ impl<P: Possessable> Possessed<P> {
 fn possessed_gotchi_serialize() {
     dotenv::dotenv().ok();
 
-    let og = Possessed::<Gotchi>::new(
+    let og = Possession::new(
         CONFIG
             .archetypes
             .iter()
@@ -861,7 +836,7 @@ fn possessed_gotchi_serialize() {
 
     let og_item = og.item("bob".to_string());
 
-    assert_eq!(og, Possessed::<Gotchi>::from_item(&og_item).unwrap());
+    assert_eq!(og, Possessed::from_item(&og_item).unwrap());
 }
 
 pub struct HacksteaderProfile {
