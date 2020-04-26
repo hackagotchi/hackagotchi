@@ -1,5 +1,5 @@
 use super::hacksteader;
-use hacksteader::{Category, Gotchi, Possessed};
+use hacksteader::{Category, Gotchi, Possession};
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 
 #[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -19,7 +19,7 @@ impl Sale {
 pub async fn market_search(
     db: &DynamoDbClient,
     cat: Category,
-) -> Option<Vec<(Possessed<Gotchi>, Sale)>> {
+) -> Option<Vec<(Possession, Sale)>> {
     let query = db
         .query(rusoto_dynamodb::QueryInput {
             table_name: hacksteader::TABLE_NAME.to_string(),
@@ -42,9 +42,9 @@ pub async fn market_search(
             .items?
             .iter_mut()
             .filter_map(|i| {
-                let mut gotchi = Possessed::<Gotchi>::from_item(i)?;
-                let sale = gotchi.sale.take()?;
-                Some((gotchi, sale))
+                let mut pos = Possession::from_item(i)?;
+                let sale = pos.sale.take()?;
+                Some((pos, sale))
             })
             .collect()
      )
