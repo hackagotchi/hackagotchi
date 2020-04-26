@@ -1029,6 +1029,9 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
         static ref SPAWN_POSSESSION_REGEX: regex::Regex = regex::Regex::new(
             "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?([A-z]+)"
         ).unwrap();
+        static ref DUMP_GP_REGEX: regex::Regex = regex::Regex::new(
+            "<@([A-z|0-9]+)> dump <@([A-z|0-9]+)> ([0-9]+)"
+        ).unwrap();
         static ref MARKET_FEES_INVOICE_REGEX: regex::Regex = regex::Regex::new(
             "hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])",
         ).unwrap();
@@ -1316,6 +1319,13 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             )
             .await
             .map_err(|_| "hacksteader database problem")?;
+        }
+        if let Some((dump_to, dump_amount)) = dbg!(DUMP_GP_REGEX.captures(&r.text)).and_then(|c| {
+            let _dumper = c.get(1).filter(|x| x.as_str() == &*ID)?;
+            Some((c.get(2)?.as_str().to_string(), c.get(3)?.as_str().parse::<u64>().ok()?))
+        }){
+            println!("dumping {} to {}", dump_amount, dump_to);
+            dbg!(banker::pay(dump_to, dump_amount, "GP dump".to_string()).await?);
         }
     }
 
