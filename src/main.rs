@@ -320,6 +320,35 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
 
     blocks.push(json!({ "type": "divider" }));
 
+    if hs.inventory.len() > 0 {
+        blocks.push(json!({
+            "type": "section",
+            "text": mrkdwn("*Inventory*"),
+        }));
+
+        for possession in hs.inventory.into_iter() {
+            blocks.push(json!({
+                "type": "section",
+                "text": mrkdwn(format!("_:{0}: {0}_", possession.name)),
+                "accessory": {
+                    "type": "button",
+                    "style": "primary",
+                    "text": plain_text(&possession.name),
+                    "value": serde_json::to_string(&PossessionPage {
+                        possession,
+                        interactivity,
+                        credentials,
+                    }).unwrap(),
+                    "action_id": "gotchi_page",
+                }
+            }));
+        }
+    } else {
+        blocks.push(comment("Your inventory is empty"));
+    }
+
+    blocks.push(json!({ "type": "divider" }));
+
     if let Interactivity::Read = interactivity {
         blocks.push(comment(format!(
             "This is a read-only snapshot of <@{}>'s Hackagotchi Hackstead at a specific point in time. \
