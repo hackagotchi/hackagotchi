@@ -1,5 +1,5 @@
 use super::hacksteader;
-use hacksteader::{Category, Gotchi, Possession};
+use hacksteader::{Category, Possession};
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 
 #[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -23,7 +23,7 @@ pub async fn market_search(
     let query = db
         .query(rusoto_dynamodb::QueryInput {
             table_name: hacksteader::TABLE_NAME.to_string(),
-            index_name: Some("category_price_index".to_string()),
+            index_name: Some("cat_price_index".to_string()),
             key_condition_expression: Some("cat = :sale_cat".to_string()),
             expression_attribute_values: Some(
                 [(":sale_cat".to_string(), cat.into_av())]

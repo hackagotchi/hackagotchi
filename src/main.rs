@@ -121,7 +121,7 @@ impl PossessionPage {
                 _ => {}
             }
         }
-        "gotchi_page_".to_string() + self.interactivity.id()
+        "possession_page_".to_string() + self.interactivity.id()
     }
 
     fn blocks(&self) -> Vec<Value> {
@@ -133,7 +133,7 @@ impl PossessionPage {
             credentials
         } = self;
 
-        let actions = |buttons: &[(&str, Option<&str>)]| -> Value {
+        let actions = |prefix: &str, buttons: &[(&str, Option<&str>)]| -> Value {
             match interactivity {
                 Interactivity::Write => json!({
                     "type": "actions",
@@ -141,7 +141,7 @@ impl PossessionPage {
                         let mut o = json!({
                             "type": "button",
                             "text": plain_text(action),
-                            "action_id": format!("possession_{}", action.to_lowercase()),
+                            "action_id": format!("{}_{}", prefix, action.to_lowercase()),
                         });
                         if let Some(v) = value {
                             o.as_object_mut().unwrap().insert("value".to_string(), json!(v.clone()));
@@ -153,7 +153,9 @@ impl PossessionPage {
             }
         };
 
-        blocks.push(actions(&[("Nickname", Some(&possession.nickname()))]));
+        if self.possession.kind.gotchi().is_some() {
+            blocks.push(actions("gotchi", &[("Nickname", Some(&possession.nickname()))]));
+        }
 
         let mut text_fields = vec![
             ("species", possession.name.clone()),
@@ -194,7 +196,7 @@ impl PossessionPage {
             }
         }));
 
-        blocks.push(actions(&[("Give", None), ("Sell", None)]));
+        blocks.push(actions("possession", &[("Give", None), ("Sell", None)]));
 
         if let Some(g) = possession.kind.gotchi() {
             blocks.push(comment(format!(
@@ -273,9 +275,9 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
         format_duration(SystemTime::now().duration_since(hs.profile.joined).unwrap()),
     )));
 
-    blocks.push(json!({ "type": "divider" }));
-
     if hs.gotchis.len() > 0 {
+        blocks.push(json!({ "type": "divider" }));
+
         blocks.push(json!({
             "type": "section",
             "text": mrkdwn(match hs.gotchis.len() {
@@ -303,7 +305,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
                         interactivity,
                         credentials,
                     }).unwrap(),
-                    "action_id": "gotchi_page",
+                    "action_id": "possession_page",
                 }
             }));
         }
@@ -339,7 +341,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
                         interactivity,
                         credentials,
                     }).unwrap(),
-                    "action_id": "gotchi_page",
+                    "action_id": "possession_page",
                 }
             }));
         }
@@ -455,7 +457,7 @@ async fn hackmarket_blocks() -> Vec<Value> {
                 "type": "button",
                 "style": "primary",
                 "text": plain_text(format!("{}gp", sale.price)),
-                "action_id": "gotchi_market_page",
+                "action_id": "possession_market_page",
                 "value": serde_json::to_string({
                     gotchi.sale.replace(sale);
                     &gotchi
@@ -482,8 +484,8 @@ struct SlashCommand {
     response_url: String,
 }
 
-#[post("/hackmarket", data = "<slash_command>")]
-async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
+#[post("/hackmarket", data = "<_slash_command>")]
+async fn hackmarket<'a>(_slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     Json(json!({
         "blocks": hackmarket_blocks().await,
         "response_type": "in_channel",
@@ -792,8 +794,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 // this will close the "enter nickname" modal
                 return Ok(ActionResponse::Ok(()));
             } else if let Some(price) = values
-                .get("gotchi_sell_price_block")
-                .and_then(|i| i.get("gotchi_sell_price_input"))
+                .get("possession_sell_price_block")
+                .and_then(|i| i.get("possession_sell_price_input"))
                 .and_then(|s| s.get("value"))
                 .and_then(|x| x.as_str())
                 .and_then(|s| s.parse::<u64>().ok())
@@ -813,8 +815,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
 
                 return Ok(ActionResponse::Ok(()));
             } else if let Some(Value::String(new_owner)) = values
-                .get("gotchi_give_receiver_block")
-                .and_then(|i| i.get("gotchi_give_receiver_input"))
+                .get("possession_give_receiver_block")
+                .and_then(|i| i.get("possession_give_receiver_input"))
                 .and_then(|s| s.get("selected_user"))
             {
                 println!(
@@ -828,7 +830,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "errors",
                         "errors": {
-                            "gotchi_give_receiver_input": "absolutely not okay",
+                            "possession_give_receiver_input": "absolutely not okay",
                         }
                     }))));
                 }
@@ -840,7 +842,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     hacksteader::Acquisition::Trade,
                     &mut page.possession,
                 )
-                .await?;
+                .await
+                .map_err(|e| dbg!(e))?;
 
                 // update the home tab
                 // TODO: make this not read from the database
@@ -900,24 +903,24 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
 
                     mrkdwn("Check your DMs from Banker for the hacksteading invoice!")
                 }
-                "gotchi_sell" => {
+                "possession_sell" => {
                     let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
                     //let page: PossessionPage = serde_json::from_str(&page_json).map_err(|e| dbg!(format!("couldn't parse {}: {}", page_json, e)))?;
 
                     Modal {
                         method: "push".to_string(),
                         trigger_id: i.trigger_id,
-                        callback_id: "gotchi_sell_modal".to_string(),
+                        callback_id: "possession_sell_modal".to_string(),
                         title: "Sell Gotchi".to_string(),
                         private_metadata: page_json,
                         blocks: vec![
                             json!({
                                 "type": "input",
-                                "block_id": "gotchi_sell_price_block",
+                                "block_id": "possession_sell_price_block",
                                 "label": plain_text("Price (gp)"),
                                 "element": {
                                     "type": "plain_text_input",
-                                    "action_id": "gotchi_sell_price_input",
+                                    "action_id": "possession_sell_price_input",
                                     "placeholder": plain_text("Price Gotchi"),
                                     "initial_value": "50",
                                 }
@@ -934,7 +937,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     .launch()
                     .await?
                 }
-                "gotchi_give" => {
+                "possession_give" => {
                     let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
                     let page: PossessionPage = serde_json::from_str(&page_json)
                         .map_err(|e| dbg!(format!("couldn't parse {}: {}", page_json, e)))?;
@@ -942,15 +945,15 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     Modal {
                         method: "push".to_string(),
                         trigger_id: i.trigger_id,
-                        callback_id: "gotchi_give_modal".to_string(),
+                        callback_id: "possession_give_modal".to_string(),
                         title: "Give Gotchi".to_string(),
                         blocks: vec![json!({
                             "type": "input",
-                            "block_id": "gotchi_give_receiver_block",
+                            "block_id": "possession_give_receiver_block",
                             "label": plain_text("Give Gotchi"),
                             "element": {
                                 "type": "users_select",
-                                "action_id": "gotchi_give_receiver_input",
+                                "action_id": "possession_give_receiver_input",
                                 "placeholder": plain_text("Who Really Gets your Gotchi?"),
                                 "initial_user": ({
                                     let s = &hacksteader::CONFIG.special_users;
@@ -1002,7 +1005,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     .launch()
                     .await?
                 }
-                "gotchi_market_page" => {
+                "possession_market_page" => {
                     let market_json = action.value;
                     let possession: Possession = serde_json::from_str(&market_json).unwrap();
 
@@ -1021,7 +1024,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     let page_json = serde_json::to_string(&page).unwrap();
                     page.modal(i.trigger_id, page_json).launch().await?
                 }
-                "gotchi_page" => {
+                "possession_page" => {
                     let page_json = action.value;
                     let page: PossessionPage = serde_json::from_str(&page_json).unwrap();
 
@@ -1075,6 +1078,9 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
         ).unwrap();
         static ref DUMP_GP_REGEX: regex::Regex = regex::Regex::new(
             "<@([A-z|0-9]+)> dump <@([A-z|0-9]+)> ([0-9]+)"
+        ).unwrap();
+        static ref LANDFILL_REGEX: regex::Regex = regex::Regex::new(
+            "<@([A-z|0-9]+)> landfill"
         ).unwrap();
         static ref MARKET_FEES_INVOICE_REGEX: regex::Regex = regex::Regex::new(
             "hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])",
@@ -1288,7 +1294,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                     gotchi.inner.nickname,
                     gotchi.inner.base_happiness,
                 );
-                let steader_in_harvest_log: bool = gotchi.inner.harvest_log.last().filter(|x| x.id == gotchi.steader).is_some();
+                let steader_in_harvest_log: bool = gotchi.inner.harvest_log.get(0).filter(|x| x.id == gotchi.steader).is_some();
                 let db_update = rusoto_dynamodb::UpdateItemInput {
                     table_name: hacksteader::TABLE_NAME.to_string(),
                     key: gotchi.clone().into_possession().empty_item(),
@@ -1373,6 +1379,14 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
         }){
             println!("dumping {} to {}", dump_amount, dump_to);
             dbg!(banker::pay(dump_to, dump_amount, "GP dump".to_string()).await?);
+        }
+        if LANDFILL_REGEX.captures(&r.text).and_then(|c| c.get(1)).filter(|x| x.as_str() == &*ID).is_some() {
+            println!("landfill time!");
+
+            match hacksteader::landfill(&dyn_db()).await {
+                Ok(()) => {},
+                Err(e) => println!("landfill error: {}", e),
+            }
         }
     }
 
