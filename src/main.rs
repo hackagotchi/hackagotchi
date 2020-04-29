@@ -275,6 +275,52 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
         format_duration(SystemTime::now().duration_since(hs.profile.joined).unwrap()),
     )));
 
+    blocks.push(json!({ "type": "divider" }));
+
+    for tile in hs.land.into_iter() {
+        blocks.push(json!({
+            "type": "section",
+            "text": mrkdwn("bruh"),
+            "accessory": {
+                "type": "image",
+                "image_url": match tile.plant {
+                    Some(p) => format!("http://{}/gotchi/img/plant/{}/{}.png", *URL, p.name.to_lowercase(), p.xp),
+                    None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
+                },
+                "alt_text": "Land, waiting to be monopolized upon!",
+            }
+        }));
+    }
+
+    blocks.push(json!({ "type": "divider" }));
+
+    if hs.inventory.len() > 0 {
+        blocks.push(json!({
+            "type": "section",
+            "text": mrkdwn("*Inventory*"),
+        }));
+
+        for possession in hs.inventory.into_iter() {
+            blocks.push(json!({
+                "type": "section",
+                "text": mrkdwn(format!("_:{0}: {0}_", possession.name)),
+                "accessory": {
+                    "type": "button",
+                    "style": "primary",
+                    "text": plain_text(&possession.name),
+                    "value": serde_json::to_string(&PossessionPage {
+                        possession,
+                        interactivity,
+                        credentials,
+                    }).unwrap(),
+                    "action_id": "possession_page",
+                }
+            }));
+        }
+    } else {
+        blocks.push(comment("Your inventory is empty"));
+    }
+
     if hs.gotchis.len() > 0 {
         blocks.push(json!({ "type": "divider" }));
 
@@ -320,38 +366,9 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
         ));
     }
 
-    blocks.push(json!({ "type": "divider" }));
-
-    if hs.inventory.len() > 0 {
-        blocks.push(json!({
-            "type": "section",
-            "text": mrkdwn("*Inventory*"),
-        }));
-
-        for possession in hs.inventory.into_iter() {
-            blocks.push(json!({
-                "type": "section",
-                "text": mrkdwn(format!("_:{0}: {0}_", possession.name)),
-                "accessory": {
-                    "type": "button",
-                    "style": "primary",
-                    "text": plain_text(&possession.name),
-                    "value": serde_json::to_string(&PossessionPage {
-                        possession,
-                        interactivity,
-                        credentials,
-                    }).unwrap(),
-                    "action_id": "possession_page",
-                }
-            }));
-        }
-    } else {
-        blocks.push(comment("Your inventory is empty"));
-    }
-
-    blocks.push(json!({ "type": "divider" }));
-
     if let Interactivity::Read = interactivity {
+        blocks.push(json!({ "type": "divider" }));
+
         blocks.push(comment(format!(
             "This is a read-only snapshot of <@{}>'s Hackagotchi Hackstead at a specific point in time. \
             You can manage your own Hackagotchi Hackstead in real time at your \
@@ -1356,7 +1373,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                 let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
                 let possession_name = c.get(4)?.as_str();
                 let archetype_handle = CONFIG
-                    .archetypes
+                    .possession_archetypes
                     .iter()
                     .position(|x| x.name == possession_name)?;
                 Some((receiver.to_string(), archetype_handle))

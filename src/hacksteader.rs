@@ -15,7 +15,8 @@ pub const TABLE_NAME: &'static str = "hackagotchi";
 #[derive(serde::Deserialize)]
 pub struct Config {
     pub special_users: Vec<String>,
-    pub archetypes: Vec<Archetype>,
+    pub plant_archetypes: Vec<PlantArchetype>,
+    pub possession_archetypes: Vec<Archetype>,
 }
 pub type ArchetypeHandle = usize;
 
@@ -38,6 +39,22 @@ pub enum ArchetypeKind {
 pub struct Archetype {
     pub name: String,
     pub kind: ArchetypeKind,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct PlantArchetype {
+    pub name: String,
+}
+
+lazy_static::lazy_static! {
+    pub static ref CONFIG: Config = {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/gotchi_config.json");
+        let file = std::fs::File::open(path)
+            .unwrap_or_else(|e| panic!("Couldn't open {}: {}", path, e));
+
+        serde_json::from_reader(std::io::BufReader::new(file))
+            .unwrap_or_else(|e| panic!("Couldn't parse {}: {}", path, e))
+    };
 }
 
 // A searchable category in the market. May or may not
@@ -84,6 +101,7 @@ impl std::convert::TryFrom<u8> for Category {
             0 => Profile,
             1 => Gotchi,
             2 => Misc,
+            3 => Land,
             9 => Sale,
             _ => return Err(CategoryError::UnknownCategory),
         })
@@ -110,17 +128,6 @@ impl Category {
             ..Default::default()
         }
     }
-}
-
-lazy_static::lazy_static! {
-    pub static ref CONFIG: Config = {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/gotchi_config.json");
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|e| panic!("Couldn't open {}: {}", path, e));
-
-        serde_json::from_reader(std::io::BufReader::new(file))
-            .unwrap_or_else(|e| panic!("Couldn't parse {}: {}", path, e))
-    };
 }
 
 pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
@@ -198,6 +205,7 @@ pub async fn landfill(db: &DynamoDbClient) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct Tile {
     pub acquired: SystemTime,
     pub plant: Option<Plant>,
@@ -267,9 +275,21 @@ impl Tile {
         }
     }
 }
+
+#[derive(Debug)]
 pub struct Plant {
-    xp: u64
+    pub xp: u64,
+    pub archetype_handle: ArchetypeHandle,
 }
+
+impl std::ops::Deref for Plant {
+    type Target = PlantArchetype;
+
+    fn deref(&self) -> &Self::Target {
+        &CONFIG.plant_archetypes.get(self.archetype_handle).expect("invalid archetype handle")
+    }
+}
+
 impl Plant {
     pub fn from_av(av: &AttributeValue) -> Result<Self, AttributeParseError> {
         use AttributeParseError::*;
@@ -280,7 +300,11 @@ impl Plant {
             xp: m.get("xp")
                     .ok_or(MissingField("xp"))?
                     .n.as_ref().ok_or(WronglyTypedField("xp"))?
-                    .parse().map_err(|e| IntFieldParse("xp", e))?
+                    .parse().map_err(|e| IntFieldParse("xp", e))?,
+            archetype_handle: m.get("archetype_handle")
+                    .ok_or(MissingField("archetype_handle"))?
+                    .n.as_ref().ok_or(WronglyTypedField("archetype_handle"))?
+                    .parse().map_err(|e| IntFieldParse("archetype_handle", e))?,
         })
     }
     pub fn into_av(self) -> AttributeValue {
@@ -288,6 +312,10 @@ impl Plant {
             m: Some([
                  ("xp".to_string(), AttributeValue {
                      n: Some(self.xp.to_string()),
+                     ..Default::default()
+                 }),
+                 ("archetype_handle".to_string(), AttributeValue {
+                     n: Some(self.archetype_handle.to_string()),
                      ..Default::default()
                  })
             ].iter().cloned().collect()),
@@ -425,11 +453,11 @@ impl Hacksteader {
 
         for item in items.iter() {
             (|| -> Option<()> {
-                match Category::from_av(item.get("cat")?).ok()? {
+                match dbg!(Category::from_av(item.get("cat")?).ok()?) {
                     Category::Profile => profile = Some(HacksteaderProfile::from_item(item)?),
                     Category::Gotchi => gotchis.push(Possessed::from_possession(Possession::from_item(item)?)?),
                     Category::Misc => inventory.push(Possession::from_item(item)?),
-                    Category::Land => land.push(Tile::from_item(item).map_err(|e| println!("tile parse err: {}", e)).ok()?),
+                    Category::Land => land.push(dbg!(Tile::from_item(item).map_err(|e| println!("tile parse err: {}", e)).ok()?)),
                     _ => unreachable!(),
                 }
                 Some(())
@@ -465,7 +493,7 @@ impl PossessionKind {
         }
     }
     fn new(ah: ArchetypeHandle, owner_id: &str) -> Self {
-        match CONFIG.archetypes.get(ah).unwrap_or_else(|| panic!("Unknown archetype: {}", ah)).kind {
+        match CONFIG.possession_archetypes.get(ah).unwrap_or_else(|| panic!("Unknown archetype: {}", ah)).kind {
             ArchetypeKind::Gotchi(_) => PossessionKind::Gotchi(Gotchi::new(ah, owner_id)),
             ArchetypeKind::Seed(_) => PossessionKind::Seed(Seed::new(ah, owner_id)),
             ArchetypeKind::Keepsake(_) => PossessionKind::Keepsake(Keepsake::new(ah, owner_id)),
@@ -611,7 +639,7 @@ impl std::ops::Deref for Gotchi {
     type Target = GotchiArchetype;
 
     fn deref(&self) -> &Self::Target {
-        match &CONFIG.archetypes.get(self.archetype_handle).expect("invalid archetype handle").kind {
+        match &CONFIG.possession_archetypes.get(self.archetype_handle).expect("invalid archetype handle").kind {
             ArchetypeKind::Gotchi(g) => g,
             _ => panic!("gotchi has non-gotchi archetype handle {}", self.archetype_handle)
         }
@@ -622,7 +650,7 @@ impl Gotchi {
     fn new(archetype_handle: ArchetypeHandle, owner_id: &str) -> Self {
         Self {
             archetype_handle,
-            nickname: CONFIG.archetypes[archetype_handle].name.clone(),
+            nickname: CONFIG.possession_archetypes[archetype_handle].name.clone(),
             harvest_log: vec![GotchiHarvestOwner {
                 id: owner_id.to_string(),
                 harvested: 0,
@@ -996,7 +1024,7 @@ impl<P: Possessable> std::ops::Deref for Possessed<P> {
 impl<P: Possessable> Possessed<P> {
    fn archetype(&self) -> &Archetype {
         CONFIG
-            .archetypes
+            .possession_archetypes
             .get(self.archetype_handle)
             .expect("invalid archetype handle")
     }
@@ -1041,7 +1069,7 @@ impl Possession {
 
     fn archetype(&self) -> &Archetype {
         CONFIG
-            .archetypes
+            .possession_archetypes
             .get(self.archetype_handle)
             .expect("invalid archetype handle")
     }
