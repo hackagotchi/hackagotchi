@@ -25,7 +25,9 @@ pub struct GotchiArchetype {
     pub base_happiness: u64,
 }
 #[derive(Deserialize, Debug)]
-pub struct SeedArchetype;
+pub struct SeedArchetype {
+    pub grows_into: String,
+}
 #[derive(Deserialize, Debug)]
 pub struct KeepsakeArchetype;
 
@@ -44,6 +46,7 @@ pub struct Archetype {
 #[derive(Deserialize, Debug)]
 pub struct PlantArchetype {
     pub name: String,
+    pub seed_name: String,
 }
 
 lazy_static::lazy_static! {
@@ -527,6 +530,13 @@ impl PossessionKind {
             _ => None,
         }
     }
+    #[allow(dead_code)]
+    pub fn is_gotchi(&self) -> bool {
+        match self {
+            PossessionKind::Gotchi(_) => true,
+            _ => false,
+        }
+    }
     pub fn gotchi_mut(&mut self) -> Option<&mut Gotchi> {
         match self {
             PossessionKind::Gotchi(g) => Some(g),
@@ -549,6 +559,13 @@ impl PossessionKind {
         }
     }
     #[allow(dead_code)]
+    pub fn is_seed(&self) -> bool {
+        match self {
+            PossessionKind::Seed(_) => true,
+            _ => false,
+        }
+    }
+    #[allow(dead_code)]
     pub fn seed_mut(&mut self) -> Option<&mut Seed> {
         match self {
             PossessionKind::Seed(g) => Some(g),
@@ -568,6 +585,13 @@ impl PossessionKind {
         match self {
             PossessionKind::Keepsake(g) => Some(g),
             _ => None,
+        }
+    }
+    #[allow(dead_code)]
+    pub fn is_keepsake(&self) -> bool {
+        match self {
+            PossessionKind::Keepsake(_) => true,
+            _ => false,
         }
     }
     #[allow(dead_code)]
@@ -756,8 +780,8 @@ fn gotchi_serialize() {
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct Seed {
-    archetype_handle: ArchetypeHandle,
-    pedigree: Vec<SeedGrower>,
+    pub archetype_handle: ArchetypeHandle,
+    pub pedigree: Vec<SeedGrower>,
 }
 impl Possessable for Seed {
     fn from_possession_kind(pk: PossessionKind) -> Option<Self> {
@@ -769,8 +793,8 @@ impl Possessable for Seed {
 }
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct SeedGrower {
-    id: String,
-    generations: usize,
+    pub id: String,
+    pub generations: u64,
 }
 impl SeedGrower {
     fn from_item(item: &Item) -> Option<Self> {
@@ -972,7 +996,16 @@ pub struct Possessed<P: Possessable> {
     pub ownership_log: Vec<Owner>,
     pub sale: Option<market::Sale>
 }
+impl<P: Possessable> std::convert::TryFrom<Possession> for Possessed<P> {
+    type Error = &'static str;
+
+    fn try_from(p: Possession) -> Result<Self, Self::Error> {
+        Possessed::from_possession(p).ok_or("wrongly typed possession")
+    }
+}
 impl<P: Possessable> Possessed<P> {
+    /// Use of the TryFrom implementation is preferred, but this
+    /// static method is still exposed as a matter of convenience
     pub fn from_possession(p: Possession) -> Option<Possessed<P>> {
         let Possession {
             kind,

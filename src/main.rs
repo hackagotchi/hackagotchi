@@ -153,7 +153,7 @@ impl PossessionPage {
             }
         };
 
-        if self.possession.kind.gotchi().is_some() {
+        if self.possession.kind.is_gotchi() {
             blocks.push(actions("gotchi", &[("Nickname", Some(&possession.nickname()))]));
         }
 
@@ -280,16 +280,49 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
     for tile in hs.land.into_iter() {
         blocks.push(json!({
             "type": "section",
-            "text": mrkdwn("bruh"),
+            "text": mrkdwn(match tile.plant.as_ref() {
+                Some(p) => format!("*{}*", p.name),
+                None => "*Empty Land*\n Opportunity Awaits!".to_string()
+            }),
             "accessory": {
                 "type": "image",
-                "image_url": match tile.plant {
+                "image_url": match tile.plant.as_ref() {
                     Some(p) => format!("http://{}/gotchi/img/plant/{}/{}.png", *URL, p.name.to_lowercase(), p.xp),
                     None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
                 },
-                "alt_text": "Land, waiting to be monopolized upon!",
+                "alt_text": match tile.plant.as_ref() {
+                    Some(p) => format!("A healthy, growing {}!", p.name),
+                    None => "Land, waiting to be monopolized upon!".to_string(),
+                }
             }
         }));
+        match tile.plant {
+            Some(p) => {}
+            None => {
+                let seeds: Vec<Possessed<hacksteader::Seed>> = hs.inventory
+                    .iter()
+                    .cloned()
+                    .filter_map(|p| p.try_into().ok())
+                    .collect();
+                
+                blocks.push(if seeds.is_empty() {
+                    comment(":seedling: No seeds! See if you can buy some on the /hackmarket")
+                } else if let Interactivity::Write = interactivity {
+                    json!({
+                        "type": "actions",
+                        "elements": [{
+                            "type": "button",
+                            "text": plain_text("Plant Seed"),
+                            "style": "primary",
+                            "value": serde_json::to_string(&(tile.id.to_simple().to_string(), seeds)).unwrap(),
+                            "action_id": "seed_plant",
+                        }],
+                    })
+                } else {
+                    comment(":seedling: No planting seeds for you! This page is read only.")
+                });
+            }
+        }
     }
 
     blocks.push(json!({ "type": "divider" }));
@@ -996,6 +1029,45 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     .launch()
                     .await?
                 }
+                "seed_plant" => {
+                    let (tile_id, seeds): (uuid::Uuid, Vec<Possessed<hacksteader::Seed>>) = serde_json::from_str(&action.value).unwrap();
+
+                    Modal {
+                        method: "open".to_string(),
+                        trigger_id: i.trigger_id,
+                        callback_id: "seed_plant_modal".to_string(),
+                        title: "Plant a Seed!".to_string(),
+                        private_metadata: String::new(),
+                        blocks: vec![json!({
+                            "type": "input",
+                            "label": plain_text("Seed Select"),
+                            "block_id": "seed_plant_input",
+                            "element": {
+                                "type": "static_select",
+                                "placeholder": plain_text("Which seed do ya wanna plant?"),
+                                "action_id": "seed_plant_select",
+                                "option_groups": hacksteader::CONFIG.plant_archetypes.iter().map(|pa| {
+                                    json!({
+                                        "label": plain_text(&pa.name),
+                                        "options": seeds.iter().filter(|s| s.name == pa.seed_name).map(|s| {
+                                            json!({
+                                                "text": plain_text(&s.name),
+                                                "description": plain_text(format!(
+                                                    "{} generations", 
+                                                    s.inner.pedigree.iter().map(|sg| sg.generations).sum::<u64>()
+                                                )),
+                                                "value": serde_json::to_string(&(s.id.to_simple().to_string(), &tile_id.to_simple().to_string())).unwrap(),
+                                            })
+                                        }).collect::<Vec<Value>>(),
+                                    })
+                                }).collect::<Vec<Value>>(),
+                            }
+                        })],
+                        submit: Some("Plant it!".to_string()),
+                    }
+                    .launch()
+                    .await?
+                }
                 "gotchi_nickname" => {
                     Modal {
                         method: "push".to_string(),
@@ -1091,7 +1163,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
 
     lazy_static::lazy_static! {
         static ref SPAWN_POSSESSION_REGEX: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?([A-z]+)"
+            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?(.+)"
         ).unwrap();
         static ref DUMP_GP_REGEX: regex::Regex = regex::Regex::new(
             "<@([A-z|0-9]+)> dump <@([A-z|0-9]+)> ([0-9]+)"
@@ -1311,7 +1383,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                     gotchi.inner.nickname,
                     gotchi.inner.base_happiness,
                 );
-                let steader_in_harvest_log: bool = gotchi.inner.harvest_log.get(0).filter(|x| x.id == gotchi.steader).is_some();
+                let steader_in_harvest_log: bool = gotchi.inner.harvest_log.last().filter(|x| x.id == gotchi.steader).is_some();
                 let db_update = rusoto_dynamodb::UpdateItemInput {
                     table_name: hacksteader::TABLE_NAME.to_string(),
                     key: gotchi.clone().into_possession().empty_item(),
@@ -1368,7 +1440,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
 
     } else if CONFIG.special_users.contains(&r.user_id) {
         if let Some((receiver, archetype_handle)) =
-            SPAWN_POSSESSION_REGEX.captures(&r.text).and_then(|c| {
+            dbg!(SPAWN_POSSESSION_REGEX.captures(&r.text)).and_then(|c| {
                 let _spawner = c.get(1).filter(|x| x.as_str() == &*ID)?;
                 let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
                 let possession_name = c.get(4)?.as_str();

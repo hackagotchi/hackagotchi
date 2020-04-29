@@ -1,43 +1,46 @@
 {
-  "special_users": [
-    "UTZBECLA2",
-    "UN971L2UQ"
-  ],
-  "plant_archetypes": [
-    {
-      "name": "Bractus"
-    }
-  ],
-  "possession_archetypes": [
-    {
-      "name": "Adorpheus",
-      "kind": {
-        "Gotchi": {
-          "base_happiness": 3
+    "special_users": [
+        "UTZBECLA2",
+        "UN971L2UQ"
+    ],
+    "plant_archetypes": [
+        {
+            "name": "Bractus",
+            "seed_name": "Bractus Seed"
         }
-      }
-    },
-    {
-      "name": "Gempheus",
-      "kind": {
-        "Gotchi": {
-          "base_happiness": 3
+    ],
+    "possession_archetypes": [
+        {
+            "name": "Adorpheus",
+            "kind": {
+                "Gotchi": {
+                    "base_happiness": 3
+                }
+            }
+        },
+        {
+            "name": "Gempheus",
+            "kind": {
+                "Gotchi": {
+                    "base_happiness": 3
+                }
+            }
+        },
+        {
+            "name": "Hackpheus",
+            "kind": {
+                "Gotchi": {
+                    "base_happiness": 3
+                }
+            }
+        },
+        {
+            "name": "Bractus Seed",
+            "kind": {
+                "Seed": {
+                    "grows_into": "Bractus"
+                }
+            }
         }
-      }
-    },
-    {
-      "name": "Hackpheus",
-      "kind": {
-        "Gotchi": {
-          "base_happiness": 3
-        }
-      }
-    },
-    {
-      "name": "Seedlet",
-      "kind": {
-        "Seed": null
-      }
-    }
-  ]
+    ]
 }
