@@ -8,18 +8,20 @@ pub struct Sale {
     pub market_name: String,
 }
 impl Sale {
-    pub fn from_item(i: &hacksteader::Item) -> Option<Self> {
-        Some(Sale {
-            market_name: i.get("market_name")?.s.as_ref()?.clone(),
+    pub fn from_item(i: &hacksteader::Item) -> Result<Self, hacksteader::AttributeParseError> {
+        use hacksteader::AttributeParseError::*;
+
+        Ok(Sale {
+            market_name: i
+                .get("market_name").ok_or(MissingField("market_name"))?
+                .s.as_ref().ok_or(WronglyTypedField("market_name"))?
+                .clone(),
             price: i.get("price")?.n.as_ref()?.parse().ok()?,
         })
     }
 }
 
-pub async fn market_search(
-    db: &DynamoDbClient,
-    cat: Category,
-) -> Option<Vec<(Possession, Sale)>> {
+pub async fn market_search(db: &DynamoDbClient, cat: Category) -> Result<Vec<(Sale, Possession)>, String> {
     let query = db
         .query(rusoto_dynamodb::QueryInput {
             table_name: hacksteader::TABLE_NAME.to_string(),
@@ -35,19 +37,20 @@ pub async fn market_search(
         })
         .await;
 
-    Some(
+    Ok(
         query
-            .map_err(|e| dbg!(format!("Couldn't search market: {}", e)))
-            .ok()?
-            .items?
+            .map_err(|e| dbg!(format!("Couldn't search market: {}", e)))?
+            .items.ok_or_else(|| format!("query returned no items"))?
             .iter_mut()
-            .filter_map(|i| {
-                let mut pos = Possession::from_item(i)?;
-                let sale = pos.sale.take()?;
-                Some((pos, sale))
+            .filter_map(|i| match Possession::from_item(i) {
+                Ok(mut pos) => Some((pos.sale.take()?, pos)),
+                Err(e) => {
+                    println!("error parsing possession: {}", e);
+                    None
+                }
             })
-            .collect()
-     )
+            .collect(),
+    )
 }
 
 pub async fn place_on_market(

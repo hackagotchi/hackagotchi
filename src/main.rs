@@ -1,6 +1,7 @@
 #![feature(decl_macro)]
 #![feature(proc_macro_hygiene)]
-#![recursion_limit="512"]
+#![feature(try_trait)]
+#![recursion_limit = "512"]
 use rocket::request::LenientForm;
 use rocket::{post, routes, FromForm};
 use rocket_contrib::json::Json;
@@ -12,7 +13,7 @@ mod banker;
 mod hacksteader;
 mod market;
 
-use hacksteader::{Gotchi, Hacksteader, Possession, Possessed};
+use hacksteader::{Gotchi, Hacksteader, Possessed, Possession};
 
 fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
@@ -46,6 +47,9 @@ fn comment<S: ToString>(txt: S) -> Value {
         ]
     })
 }
+fn emojify<S: ToString>(txt: S) -> String {
+    format!(":{}:", txt.to_string().replace(" ", "_"))
+}
 
 async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
     let o = json!({
@@ -73,7 +77,7 @@ async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
 pub struct PossessionPage {
     possession: Possession,
     interactivity: Interactivity,
-    credentials: Credentials
+    credentials: Credentials,
 }
 
 impl PossessionPage {
@@ -103,7 +107,9 @@ impl PossessionPage {
     }
 
     fn submit(&self) -> Option<String> {
-        if let Some(sale) = dbg!(dbg!(self.possession.sale.as_ref()).filter(|_| self.interactivity.market(self.credentials))) {
+        if let Some(sale) = dbg!(dbg!(self.possession.sale.as_ref())
+            .filter(|_| self.interactivity.market(self.credentials)))
+        {
             match self.credentials {
                 Credentials::Owner => return Some("Take off Market".to_string()),
                 Credentials::Hacksteader => return Some(format!("Buy for {} gp", sale.price)),
@@ -114,7 +120,13 @@ impl PossessionPage {
     }
 
     fn callback_id(&self) -> String {
-        if self.possession.sale.as_ref().filter(|_| self.interactivity.market(self.credentials)).is_some() {
+        if self
+            .possession
+            .sale
+            .as_ref()
+            .filter(|_| self.interactivity.market(self.credentials))
+            .is_some()
+        {
             match self.credentials {
                 Credentials::Owner => return "sale_removal".to_string(),
                 Credentials::Hacksteader => return "sale_complete".to_string(),
@@ -130,7 +142,7 @@ impl PossessionPage {
         let Self {
             possession,
             interactivity,
-            credentials
+            credentials,
         } = self;
 
         let actions = |prefix: &str, buttons: &[(&str, Option<&str>)]| -> Value {
@@ -154,7 +166,10 @@ impl PossessionPage {
         };
 
         if self.possession.kind.is_gotchi() {
-            blocks.push(actions("gotchi", &[("Nickname", Some(&possession.nickname()))]));
+            blocks.push(actions(
+                "gotchi",
+                &[("Nickname", Some(&possession.nickname()))],
+            ));
         }
 
         let mut text_fields = vec![
@@ -170,7 +185,7 @@ impl PossessionPage {
                     .to_string(),
             ),
         ];
-        
+
         if let Some(g) = possession.kind.gotchi() {
             text_fields.push(("base happiness", g.base_happiness.to_string()));
         }
@@ -201,11 +216,7 @@ impl PossessionPage {
         if let Some(g) = possession.kind.gotchi() {
             blocks.push(comment(format!(
                 "*Lifetime GP harvested: {}*",
-                g
-                    .harvest_log
-                    .iter()
-                    .map(|x| x.harvested)
-                    .sum::<u64>(),
+                g.harvest_log.iter().map(|x| x.harvested).sum::<u64>(),
             )));
 
             for owner in g.harvest_log.iter().rev() {
@@ -258,7 +269,11 @@ async fn update_home_tab(hs: Option<Hacksteader>, user_id: String) -> Result<(),
     Ok(())
 }
 
-fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: Credentials) -> Vec<Value> {
+fn hackstead_blocks(
+    hs: Hacksteader,
+    interactivity: Interactivity,
+    credentials: Credentials,
+) -> Vec<Value> {
     use humantime::format_duration;
     use std::time::SystemTime;
 
@@ -276,7 +291,10 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
     )));
 
     blocks.push(json!({ "type": "divider" }));
-
+/*match tile.plant.as_ref() {
+                    Some(p) => format!("http://{}/gotchi/img/plant/{}/{}.png", *URL, p.name.to_lowercase(), p.xp),
+                    None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
+                }*/
     for tile in hs.land.into_iter() {
         blocks.push(json!({
             "type": "section",
@@ -286,10 +304,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
             }),
             "accessory": {
                 "type": "image",
-                "image_url": match tile.plant.as_ref() {
-                    Some(p) => format!("http://{}/gotchi/img/plant/{}/{}.png", *URL, p.name.to_lowercase(), p.xp),
-                    None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
-                },
+                "image_url": format!("http://{}/gotchi/img/misc/dirt.png", *URL),
                 "alt_text": match tile.plant.as_ref() {
                     Some(p) => format!("A healthy, growing {}!", p.name),
                     None => "Land, waiting to be monopolized upon!".to_string(),
@@ -297,14 +312,15 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
             }
         }));
         match tile.plant {
-            Some(p) => {}
+            Some(_) => {}
             None => {
-                let seeds: Vec<Possessed<hacksteader::Seed>> = hs.inventory
+                let seeds: Vec<Possessed<hacksteader::Seed>> = hs
+                    .inventory
                     .iter()
                     .cloned()
                     .filter_map(|p| p.try_into().ok())
                     .collect();
-                
+
                 blocks.push(if seeds.is_empty() {
                     comment(":seedling: No seeds! See if you can buy some on the /hackmarket")
                 } else if let Interactivity::Write = interactivity {
@@ -336,7 +352,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
         for possession in hs.inventory.into_iter() {
             blocks.push(json!({
                 "type": "section",
-                "text": mrkdwn(format!("_:{0}: {0}_", possession.name)),
+                "text": mrkdwn(format!("_{} {}_", emojify(&possession.name), possession.name)),
                 "accessory": {
                     "type": "button",
                     "style": "primary",
@@ -374,7 +390,7 @@ fn hackstead_blocks(hs: Hacksteader, interactivity: Interactivity, credentials: 
         for gotchi in hs.gotchis.into_iter() {
             blocks.push(json!({
                 "type": "section",
-                "text": mrkdwn(format!("_:{0}: ({0}, {1} happiness)_", gotchi.name, gotchi.inner.base_happiness)),
+                "text": mrkdwn(format!("_{} ({}, {} happiness)_", emojify(&gotchi.name), gotchi.name, gotchi.inner.base_happiness)),
                 "accessory": {
                     "type": "button",
                     "style": "primary",
@@ -496,11 +512,11 @@ async fn hackmarket_blocks() -> Vec<Value> {
     }));
     blocks.push(json!({ "type": "divider" }));
 
-    for (mut gotchi, sale) in sales.into_iter() {
+    for (sale, mut gotchi) in sales.into_iter() {
         blocks.push(json!({
             "type": "section",
             "fields": [
-                plain_text(format!(":{0}: {0}", sale.market_name)),
+                plain_text(format!("{} {}", emojify(&sale.market_name), sale.market_name)),
                 mrkdwn(format!("<@{}>", gotchi.steader))
             ],
             "accessory": {
@@ -732,7 +748,7 @@ impl Interactivity {
 pub enum Credentials {
     Owner,
     Hacksteader,
-    None
+    None,
 }
 
 #[post("/interact", data = "<action_data>")]
@@ -745,32 +761,37 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
         let view = v.get("view").and_then(|view| {
             let parsed_view = serde_json::from_value::<View>(view.clone()).ok()?;
             let page_json_str = &parsed_view.private_metadata;
-            let page: PossessionPage = match serde_json::from_str(&page_json_str) {
+            let page: Option<PossessionPage> = match serde_json::from_str(&page_json_str) {
                 Ok(page) => Some(page),
                 Err(e) => {
                     dbg!(format!("couldn't parse {}: {}", page_json_str, e));
                     None
                 }
-            }?;
+            };
             Some((
                 parsed_view,
                 page,
                 v.get("trigger_id")?.as_str()?,
-                view.get("state").and_then(|s| s.get("values"))?,
+                view.get("state").and_then(|s| s.get("values").cloned())?,
                 serde_json::from_value::<User>(v.get("user")?.clone()).ok()?,
             ))
         });
-        if let Some((view, mut page, trigger_id, values, user)) = view {
+        if let Some((view, Some(mut page), trigger_id, values, user)) = view {
             println!("view state values: {:#?}", values);
 
             match dbg!(view.callback_id.as_str()) {
                 "sale_removal" => {
                     println!("Revoking sale");
-                    market::take_off_market(&dyn_db(), hacksteader::Category::Gotchi, page.possession.id).await?;
+                    market::take_off_market(
+                        &dyn_db(),
+                        hacksteader::Category::Gotchi,
+                        page.possession.id,
+                    )
+                    .await?;
 
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "clear",
-                    }))))
+                    }))));
                 }
                 "sale_complete" => {
                     println!("Completing sale!");
@@ -793,7 +814,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
 
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "clear",
-                    }))))
+                    }))));
                 }
                 _ => {}
             };
@@ -807,7 +828,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 let db = dyn_db();
                 db.update_item(rusoto_dynamodb::UpdateItemInput {
                     table_name: hacksteader::TABLE_NAME.to_string(),
-                    key: page.possession.empty_item(),
+                    key: page.possession.key().into_item(),
                     update_expression: Some("SET nickname = :new_name".to_string()),
                     expression_attribute_values: Some(
                         [(
@@ -826,7 +847,11 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 .await
                 .map_err(|e| format!("Couldn't change nickname in database: {}", e))?;
 
-                let gotchi = page.possession.kind.gotchi_mut().ok_or("can only nickname gotchi".to_string())?;
+                let gotchi = page
+                    .possession
+                    .kind
+                    .gotchi_mut()
+                    .ok_or("can only nickname gotchi".to_string())?;
 
                 // update the nickname on the Gotchi,
                 gotchi.nickname = nickname.clone();
@@ -906,10 +931,10 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                         json!({
                             "type": "section",
                             "text": mrkdwn(format!(
-                                "<@{}> has been so kind as to gift you a {:?}, :{}: _{}_!",
+                                "<@{}> has been so kind as to gift you a {:?}, {} _{}_!",
                                 user.id,
                                 page.possession.kind.category(),
-                                page.possession.name,
+                                emojify(&page.possession.name),
                                 page.possession.nickname()
                             ))
                         }),
@@ -929,6 +954,26 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                 return Ok(ActionResponse::Json(Json(json!({
                     "response_action": "clear",
                 }))));
+            }
+        } else if let Some((_view, None, _trigger_id, values, _user)) = view {
+            println!("view state values: {:#?}", values);
+
+            if let Some((tile_id, seed_id, seed_ah)) = dbg!(values.get("seed_plant_input"))
+                .and_then(|i| dbg!(i.get("seed_plant_select")))
+                .and_then(|s| dbg!(s.get("selected_option")))
+                .and_then(|s| dbg!(s.get("value")))
+                .and_then(|s| s.as_str())
+                .and_then(|v| dbg!(serde_json::from_str(v).ok()))
+            {
+                println!("planting seed!");
+                let db = dyn_db();
+                futures::try_join!(
+                    Hacksteader::delete(&db, hacksteader::Key::misc(seed_id)),
+                    hacksteader::Tile::plant(&db, tile_id, seed_ah)
+                )
+                .map_err(|e| dbg!(format!("couldn't plant seed: {}", e)))?;
+
+                return Ok(ActionResponse::Ok(()));
             }
         }
     }
@@ -1012,8 +1057,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                                 "confirm": {
                                     "title": plain_text("You sure?"),
                                     "text": mrkdwn(format!(
-                                        "Are you sure you want to give away :{}: _{}_? You might not get them back. :frowning:",
-                                        page.possession.name,
+                                        "Are you sure you want to give away {} _{}_? You might not get them back. :frowning:",
+                                        emojify(&page.possession.name),
                                         page.possession.nickname()
                                     )),
                                     "confirm": plain_text("Give!"),
@@ -1030,7 +1075,8 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                     .await?
                 }
                 "seed_plant" => {
-                    let (tile_id, seeds): (uuid::Uuid, Vec<Possessed<hacksteader::Seed>>) = serde_json::from_str(&action.value).unwrap();
+                    let (tile_id, seeds): (uuid::Uuid, Vec<Possessed<hacksteader::Seed>>) =
+                        serde_json::from_str(&action.value).unwrap();
 
                     Modal {
                         method: "open".to_string(),
@@ -1046,21 +1092,36 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                                 "type": "static_select",
                                 "placeholder": plain_text("Which seed do ya wanna plant?"),
                                 "action_id": "seed_plant_select",
-                                "option_groups": hacksteader::CONFIG.plant_archetypes.iter().map(|pa| {
-                                    json!({
-                                        "label": plain_text(&pa.name),
-                                        "options": seeds.iter().filter(|s| s.name == pa.seed_name).map(|s| {
-                                            json!({
-                                                "text": plain_text(&s.name),
-                                                "description": plain_text(format!(
-                                                    "{} generations", 
-                                                    s.inner.pedigree.iter().map(|sg| sg.generations).sum::<u64>()
-                                                )),
-                                                "value": serde_json::to_string(&(s.id.to_simple().to_string(), &tile_id.to_simple().to_string())).unwrap(),
-                                            })
-                                        }).collect::<Vec<Value>>(),
+                                // show them each seed they have that grows a given plant
+                                "option_groups": hacksteader::CONFIG
+                                    .plant_archetypes
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(pah, pa)| { //plant archetype handle, plant archetype
+                                        json!({
+                                            "label": plain_text(&pa.name),
+                                            "options": seeds
+                                                .iter()
+                                                .filter(|s| s.inner.grows_into == pa.name)
+                                                .map(|s| {
+                                                    json!({
+                                                        "text": plain_text(format!("{} {}", emojify(&s.name), s.name)),
+                                                        "description": plain_text(format!(
+                                                            "{} generations old", 
+                                                            s.inner.pedigree.iter().map(|sg| sg.generations).sum::<u64>()
+                                                        )),
+                                                        // this is fucky-wucky because value can only be 75 chars
+                                                        "value": serde_json::to_string(&(
+                                                            &tile_id.to_simple().to_string(),
+                                                            s.id.to_simple().to_string(),
+                                                            pah
+                                                        )).unwrap(),
+                                                    })
+                                                })
+                                                .collect::<Vec<Value>>(),
+                                        })
                                     })
-                                }).collect::<Vec<Value>>(),
+                                    .collect::<Vec<Value>>(),
                             }
                         })],
                         submit: Some("Plant it!".to_string()),
@@ -1202,7 +1263,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             price: u64,
             id: uuid::Uuid,
             category: hacksteader::Category,
-            from: Option<String>
+            from: Option<String>,
         }
 
         fn captures_to_sale(captures: &regex::Captures) -> Option<Sale> {
@@ -1217,7 +1278,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                     .ok()?
                     .try_into()
                     .ok()?,
-                from: captures.get(5).map(|x| x.as_str().to_string())
+                from: captures.get(5).map(|x| x.as_str().to_string()),
             })
         }
 
@@ -1258,7 +1319,14 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             use futures::future::TryFutureExt;
             println!("MARKET_PURCHASE_REGEX: {:#?}", captures);
 
-            if let Some(Sale { id, category, name, price, from: Some(seller) }) = captures_to_sale(&captures) {
+            if let Some(Sale {
+                id,
+                category,
+                name,
+                price,
+                from: Some(seller),
+            }) = captures_to_sale(&captures)
+            {
                 let paid_for = format!("sale of your {}", name);
                 let db = dyn_db();
                 futures::try_join!(
@@ -1319,15 +1387,16 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                 .map_err(|e| dbg!(format!("Couldn't complete sale of {}: {}", id, e)))?;
             }
         }
-        
+
         banker::balance().await?;
-    } if let Some(balance) = dbg!(BALANCE_REPORT_REGEX.captures(&r.text))
+    }
+    if let Some(balance) = dbg!(BALANCE_REPORT_REGEX.captures(&r.text))
         .filter(|_| r.channel == *banker::CHAT_ID)
         .and_then(|x| x.get(1))
         .and_then(|x| x.as_str().parse::<u64>().ok())
     {
         use futures::future::TryFutureExt;
-        use futures::stream::{self, TryStreamExt, StreamExt};
+        use futures::stream::{self, StreamExt, TryStreamExt};
         println!("I got {} problems and GP ain't one", balance);
 
         let query = dyn_db()
@@ -1337,7 +1406,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                 expression_attribute_values: Some({
                     [(
                         ":gotchi_cat".to_string(),
-                        hacksteader::Category::Gotchi.into_av()
+                        hacksteader::Category::Gotchi.into_av(),
                     )]
                     .iter()
                     .cloned()
@@ -1352,14 +1421,19 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             .items
             .ok_or("no gotchis found!")?
             .iter()
-            .map(|i| Possessed::<Gotchi>::from_possession(Possession::from_item(i)?))
-            .collect::<Option<Vec<Possessed<Gotchi>>>>()
-            .ok_or("error parsing gotchis")?;
+            .filter_map(|i| match Possession::from_item(i) {
+                Ok(p) => Some(Possessed::<Gotchi>::from_possession(p).unwrap()),
+                Err(e) => {
+                    println!("error parsing gotchi: {}", e);
+                    None
+                }
+            })
+            .collect::<Vec<Possessed<Gotchi>>>();
 
         let total_happiness: u64 = gotchis.iter().map(|x| x.inner.base_happiness).sum();
         let mut funds_awarded = 0;
 
-        for _ in 0..balance/total_happiness {
+        for _ in 0..balance / total_happiness {
             stream::iter(gotchis.clone()).map(|x| Ok(x)).try_for_each_concurrent(None, |gotchi| {
                 let dm = vec![
                     json!({
@@ -1386,7 +1460,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                 let steader_in_harvest_log: bool = gotchi.inner.harvest_log.last().filter(|x| x.id == gotchi.steader).is_some();
                 let db_update = rusoto_dynamodb::UpdateItemInput {
                     table_name: hacksteader::TABLE_NAME.to_string(),
-                    key: gotchi.clone().into_possession().empty_item(),
+                    key: gotchi.clone().into_possession().key().into_item(),
                     update_expression: Some(if steader_in_harvest_log {
                         format!("ADD harvest_log[{}].harvested :harv", gotchi.inner.harvest_log.len() - 1)
                     } else {
@@ -1437,10 +1511,9 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             banker::message(format!("{} GP earned this harvest!", funds_awarded)),
             banker::message(format!("total happiness: {}", total_happiness)),
         )?;
-
     } else if CONFIG.special_users.contains(&r.user_id) {
-        if let Some((receiver, archetype_handle)) =
-            dbg!(SPAWN_POSSESSION_REGEX.captures(&r.text)).and_then(|c| {
+        if let Some((receiver, archetype_handle)) = dbg!(SPAWN_POSSESSION_REGEX.captures(&r.text))
+            .and_then(|c| {
                 let _spawner = c.get(1).filter(|x| x.as_str() == &*ID)?;
                 let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
                 let possession_name = c.get(4)?.as_str();
@@ -1454,26 +1527,37 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             Hacksteader::give_possession(
                 &dyn_db(),
                 receiver.clone(),
-                &Possession::new(archetype_handle, hacksteader::Owner {
-                    id: receiver,
-                    acquisition: hacksteader::Acquisition::spawned(),
-                })
+                &Possession::new(
+                    archetype_handle,
+                    hacksteader::Owner {
+                        id: receiver,
+                        acquisition: hacksteader::Acquisition::spawned(),
+                    },
+                ),
             )
             .await
             .map_err(|_| "hacksteader database problem")?;
         }
         if let Some((dump_to, dump_amount)) = dbg!(DUMP_GP_REGEX.captures(&r.text)).and_then(|c| {
             let _dumper = c.get(1).filter(|x| x.as_str() == &*ID)?;
-            Some((c.get(2)?.as_str().to_string(), c.get(3)?.as_str().parse::<u64>().ok()?))
-        }){
+            Some((
+                c.get(2)?.as_str().to_string(),
+                c.get(3)?.as_str().parse::<u64>().ok()?,
+            ))
+        }) {
             println!("dumping {} to {}", dump_amount, dump_to);
             dbg!(banker::pay(dump_to, dump_amount, "GP dump".to_string()).await?);
         }
-        if LANDFILL_REGEX.captures(&r.text).and_then(|c| c.get(1)).filter(|x| x.as_str() == &*ID).is_some() {
+        if LANDFILL_REGEX
+            .captures(&r.text)
+            .and_then(|c| c.get(1))
+            .filter(|x| x.as_str() == &*ID)
+            .is_some()
+        {
             println!("landfill time!");
 
             match hacksteader::landfill(&dyn_db()).await {
-                Ok(()) => {},
+                Ok(()) => {}
                 Err(e) => println!("landfill error: {}", e),
             }
         }

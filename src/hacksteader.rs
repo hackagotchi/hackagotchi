@@ -1,8 +1,8 @@
+use super::market;
 use humantime::{format_rfc3339, parse_rfc3339};
 use rusoto_core::RusotoError;
-use rusoto_dynamodb::{AttributeValue, DeleteItemError, DynamoDb, DynamoDbClient, PutItemError};
+use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
 use serde::{Deserialize, Serialize};
-use super::market;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt;
@@ -17,6 +17,20 @@ pub struct Config {
     pub special_users: Vec<String>,
     pub plant_archetypes: Vec<PlantArchetype>,
     pub possession_archetypes: Vec<Archetype>,
+}
+impl Config {
+    fn find_plant<S: AsRef<String>>(&self, name: S) -> Option<PlantArchetype> {
+        self
+            .plant_archetypes
+            .iter()
+            .find(|x| name.as_ref() == sa.grows_into)
+    }
+    fn find_possession<S: AsRef<String>>(&self, name: S) -> Option<Archetype> {
+        self
+            .possession_archetypes
+            .iter()
+            .find(|x| name.as_ref() == sa.grows_into)
+    }
 }
 pub type ArchetypeHandle = usize;
 
@@ -47,6 +61,35 @@ pub struct Archetype {
 pub struct PlantArchetype {
     pub name: String,
     pub seed_name: String,
+    pub advancements: Vec<Advancement>,
+}
+#[derive(Deserialize, Debug)]
+pub struct Recipe {
+    needs: Vec<(usize, String)>,
+    makes: String,
+}
+#[derive(Deserialize, Debug)]
+pub enum AdvancementKind {
+    YieldSpeed {
+        increase: f32,
+    },
+    YieldNeighboringSpeed {
+        increase: f32
+    },
+    Yield {
+        resources: Vec<(f32, String)>,
+    },
+    Craft {
+        recipes: Vec<Recipe>,
+    },
+}
+#[derive(Deserialize, Debug)]
+pub struct Advancement {
+    kind: AdvancementKind,
+    xp: u64,
+    title: String,
+    description: String,
+    achiever_title: String,
 }
 
 lazy_static::lazy_static! {
@@ -60,6 +103,55 @@ lazy_static::lazy_static! {
     };
 }
 
+#[test]
+/// In the CONFIG, you can specify the names of archetypes.
+/// If you're Rishi, you might spell one of those names wrong.
+/// This test helps you make sure you didn't do that.
+fn archetype_name_matches() {
+    for a in CONFIG.possession_archetypes.iter() {
+        match &a.kind {
+            ArchetypeKind::Seed(sa) => assert!(
+                CONFIG.find_plant(sa.grows_into).is_some(),
+                "seed archetype {:?} claims it grows into unknown plant archetype {:?}",
+                a.name,
+                sa.grows_into,
+            ),
+            _ => {},
+        }
+    }
+
+    for arch in CONFIG.plant_archetypes.iter() {
+        for adv in arch.advancements.iter() {
+            use AdvancementKind::*;
+
+            match &adv.kind {
+                Yield { resources } => {
+                    for (_, item_name) in resources.iter() {
+                        assert!(
+                            CONFIG.find_possession(item_name).is_some(),
+                            "Yield advancement {:?} for plant {:?} includes unknown resource {:?}",
+                            adv.name,
+                            arch.name,
+                            item_name,
+                        )
+                    }
+                }
+                Craft { recipes } => {
+                    for Recipe { makes, resources } in resources.iter() {
+                        assert!(
+                            CONFIG.find_possession(item_name).is_some(),
+                            "Crafting advancement {:?} for plant {:?} includes unknown resource {:?}",
+                            adv.name,
+                            arch.name,
+                            item_name,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 // A searchable category in the market. May or may not
 // correspond 1:1 to an Archetype.
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -71,7 +163,7 @@ pub enum Category {
     Sale = 9,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CategoryError {
     UnknownCategory,
     InvalidAttributeValue,
@@ -83,8 +175,10 @@ impl fmt::Display for CategoryError {
 
         match self {
             UnknownCategory => write!(f, "Unknown Category!"),
-            InvalidAttributeValue => write!(f, "AttributeValue wasn't a number!"),
-            InvalidNumber(e) => write!(f, "Couldn't parse number in AttributeValue: {}", e),
+            InvalidAttributeValue => write!(f, "Category AttributeValue wasn't a number!"),
+            InvalidNumber(e) => {
+                write!(f, "Couldn't parse number in Category AttributeValue: {}", e)
+            }
         }
     }
 }
@@ -135,7 +229,7 @@ impl Category {
 
 pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
     db.get_item(rusoto_dynamodb::GetItemInput {
-        key: HacksteaderProfile::new(user_id).empty_item(),
+        key: HacksteaderProfile::key_item(user_id),
         table_name: TABLE_NAME.to_string(),
         ..Default::default()
     })
@@ -149,9 +243,23 @@ pub enum AttributeParseError {
     IntFieldParse(&'static str, std::num::ParseIntError),
     TimeFieldParse(&'static str, humantime::TimestampError),
     IdFieldParse(&'static str, uuid::Error),
+    CategoryParse(CategoryError),
     MissingField(&'static str),
     WronglyTypedField(&'static str),
     WrongType,
+    Unknown,
+    Custom(&'static str),
+}
+
+impl From<CategoryError> for AttributeParseError {
+    fn from(o: CategoryError) -> Self {
+        AttributeParseError::CategoryParse(o)
+    }
+}
+impl From<std::option::NoneError> for AttributeParseError {
+    fn from(_: std::option::NoneError) -> Self {
+        AttributeParseError::Unknown
+    }
 }
 
 impl fmt::Display for AttributeParseError {
@@ -159,11 +267,16 @@ impl fmt::Display for AttributeParseError {
         use AttributeParseError::*;
         match self {
             IntFieldParse(field, e) => write!(f, "error parsing integer field {:?}: {}", field, e),
-            TimeFieldParse(field, e) => write!(f, "error parsing timestamp field {:?}: {}", field, e),
+            TimeFieldParse(field, e) => {
+                write!(f, "error parsing timestamp field {:?}: {}", field, e)
+            }
             IdFieldParse(field, e) => write!(f, "error parsing id field {:?}: {}", field, e),
             MissingField(field) => write!(f, "missing field {:?}", field),
+            CategoryParse(e) => write!(f, "failed parsing category {}", e),
             WronglyTypedField(field) => write!(f, "wrongly typed field {:?}", field),
             WrongType => write!(f, "wrong AttributeValue type"),
+            Unknown => write!(f, "unknown parsing error"),
+            Custom(e) => write!(f, "{}", e),
         }
     }
 }
@@ -174,17 +287,14 @@ pub async fn landfill(db: &DynamoDbClient) -> Result<(), String> {
             table_name: TABLE_NAME.to_string(),
             key_condition_expression: Some("cat = :profile_cat".to_string()),
             expression_attribute_values: Some({
-                [(
-                    ":profile_cat".to_string(),
-                    Category::Profile.into_av()
-                 )]
+                [(":profile_cat".to_string(), Category::Profile.into_av())]
                     .iter()
                     .cloned()
                     .collect()
             }),
             ..Default::default()
         })
-    .await;
+        .await;
 
     let profiles = query
         .map_err(|e| format!("couldn't query all hacksteaders: {}", e))?
@@ -192,18 +302,32 @@ pub async fn landfill(db: &DynamoDbClient) -> Result<(), String> {
         .ok_or("no hacksteaders found!")?
         .iter()
         .map(|i| HacksteaderProfile::from_item(i))
-        .collect::<Option<Vec<HacksteaderProfile>>>()
-        .ok_or("error parsing hacksteaders")?;
+        .collect::<Result<Vec<HacksteaderProfile>, AttributeParseError>>()
+        .map_err(|e| format!("error parsing hacksteaders: {}", e))?;
 
     db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-        request_items: [(TABLE_NAME.to_string(), profiles.iter().map(|p| rusoto_dynamodb::WriteRequest {
-            put_request: Some(rusoto_dynamodb::PutRequest {
-                item: Tile::new(p.id.clone()).into_av().m.expect("tile attribute should be map"),
-            }),
-            ..Default::default()
-        }).collect())].iter().cloned().collect(),
+        request_items: [(
+            TABLE_NAME.to_string(),
+            profiles
+                .iter()
+                .map(|p| rusoto_dynamodb::WriteRequest {
+                    put_request: Some(rusoto_dynamodb::PutRequest {
+                        item: Tile::new(p.id.clone())
+                            .into_av()
+                            .m
+                            .expect("tile attribute should be map"),
+                    }),
+                    ..Default::default()
+                })
+                .collect(),
+        )]
+        .iter()
+        .cloned()
+        .collect(),
         ..Default::default()
-    }).await.map_err(|e| format!("couldn't write new land into db: {}", e))?;
+    })
+    .await
+    .map_err(|e| format!("couldn't write new land into db: {}", e))?;
 
     Ok(())
 }
@@ -225,49 +349,77 @@ impl Tile {
         }
     }
 
+    pub async fn plant(db: &DynamoDbClient, tile_id: uuid::Uuid, seed_ah: ArchetypeHandle) -> Result<(), String> {
+        match db.update_item(rusoto_dynamodb::UpdateItemInput {
+            table_name: TABLE_NAME.to_string(),
+            key: Key::tile(tile_id).into_item(),
+            update_expression: Some("SET plant = :baby_plant".to_string()),
+            expression_attribute_values: Some(
+                [(":baby_plant".to_string(), Plant::new(seed_ah).into_av())]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            ),
+            ..Default::default()
+        }).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("couldn't plant on tile in db: {}", e)),
+        }
+    }
+
     pub fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
         use AttributeParseError::*;
 
         Ok(Self {
             acquired: parse_rfc3339(
-                    item
-                        .get("acquired").ok_or(MissingField("acquired"))?
-                        .s.as_ref().ok_or(WronglyTypedField("acquired"))?
-                )
-                .map_err(|e| TimeFieldParse("acquired", e))?,
+                item.get("acquired")
+                    .ok_or(MissingField("acquired"))?
+                    .s
+                    .as_ref()
+                    .ok_or(WronglyTypedField("acquired"))?,
+            )
+            .map_err(|e| TimeFieldParse("acquired", e))?,
             plant: match item.get("plant") {
                 Some(av) => Some(Plant::from_av(av)?),
-                None => None
+                None => None,
             },
             id: uuid::Uuid::parse_str(
-                    item
-                        .get("id").ok_or(MissingField("id"))?
-                        .s.as_ref().ok_or(WronglyTypedField("id"))?
-                ).map_err(|e| IdFieldParse("id", e))?,
-            steader: item.get("steader").ok_or(MissingField("steader"))?
-                .s.as_ref().ok_or(WronglyTypedField("steader"))?
-                .clone()
+                item.get("id")
+                    .ok_or(MissingField("id"))?
+                    .s
+                    .as_ref()
+                    .ok_or(WronglyTypedField("id"))?,
+            )
+            .map_err(|e| IdFieldParse("id", e))?,
+            steader: item
+                .get("steader")
+                .ok_or(MissingField("steader"))?
+                .s
+                .as_ref()
+                .ok_or(WronglyTypedField("steader"))?
+                .clone(),
         })
     }
 
     pub fn into_av(self) -> AttributeValue {
         AttributeValue {
             m: Some({
-                let mut m: Item = [
-                    ("acquired".to_string(), AttributeValue {
+                let mut m = Key::tile(self.id.clone()).into_item();
+                m.insert(
+                    "acquired".to_string(),
+                    AttributeValue {
                         s: Some(format_rfc3339(self.acquired).to_string()),
                         ..Default::default()
-                    }),
-                    ("id".to_string(), AttributeValue {
-                        s: Some(self.id.to_string()),
-                        ..Default::default()
-                    }),
-                    ("steader".to_string(), AttributeValue {
+                    },
+                );
+                m.insert(
+                    "steader".to_string(),
+                    AttributeValue {
                         s: Some(self.steader.clone()),
                         ..Default::default()
-                    }),
-                    ("cat".to_string(), Category::Land.into_av()),
-                ].iter().cloned().collect();
+                    },
+                );
+
                 if let Some(plant) = self.plant {
                     m.insert("plant".to_string(), plant.into_av());
                 }
@@ -289,41 +441,128 @@ impl std::ops::Deref for Plant {
     type Target = PlantArchetype;
 
     fn deref(&self) -> &Self::Target {
-        &CONFIG.plant_archetypes.get(self.archetype_handle).expect("invalid archetype handle")
+        &CONFIG
+            .plant_archetypes
+            .get(self.archetype_handle)
+            .expect("invalid archetype handle")
     }
 }
 
 impl Plant {
+    pub fn new(ah: ArchetypeHandle) -> Self {
+        Self { xp: 0, archetype_handle: ah }
+    }
+
     pub fn from_av(av: &AttributeValue) -> Result<Self, AttributeParseError> {
         use AttributeParseError::*;
 
         let m = av.m.as_ref().ok_or(WrongType)?;
 
         Ok(Self {
-            xp: m.get("xp")
-                    .ok_or(MissingField("xp"))?
-                    .n.as_ref().ok_or(WronglyTypedField("xp"))?
-                    .parse().map_err(|e| IntFieldParse("xp", e))?,
-            archetype_handle: m.get("archetype_handle")
-                    .ok_or(MissingField("archetype_handle"))?
-                    .n.as_ref().ok_or(WronglyTypedField("archetype_handle"))?
-                    .parse().map_err(|e| IntFieldParse("archetype_handle", e))?,
+            xp: m
+                .get("xp")
+                .ok_or(MissingField("xp"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("xp"))?
+                .parse()
+                .map_err(|e| IntFieldParse("xp", e))?,
+            archetype_handle: m
+                .get("archetype_handle")
+                .ok_or(MissingField("archetype_handle"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("archetype_handle"))?
+                .parse()
+                .map_err(|e| IntFieldParse("archetype_handle", e))?,
         })
     }
+
     pub fn into_av(self) -> AttributeValue {
         AttributeValue {
-            m: Some([
-                 ("xp".to_string(), AttributeValue {
-                     n: Some(self.xp.to_string()),
-                     ..Default::default()
-                 }),
-                 ("archetype_handle".to_string(), AttributeValue {
-                     n: Some(self.archetype_handle.to_string()),
-                     ..Default::default()
-                 })
-            ].iter().cloned().collect()),
+            m: Some(
+                [
+                    (
+                        "xp".to_string(),
+                        AttributeValue {
+                            n: Some(self.xp.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "archetype_handle".to_string(),
+                        AttributeValue {
+                            n: Some(self.archetype_handle.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+            ),
             ..Default::default()
         }
+    }
+}
+
+/// A model for all keys that use uuid:Uuids internally,
+/// essentially all those except HacksteaderProfile keys.
+pub struct Key {
+    category: Category,
+    id: uuid::Uuid,
+}
+impl Key {
+    #[allow(dead_code)]
+    pub fn gotchi(id: uuid::Uuid) -> Self {
+        Self {
+            category: Category::Gotchi,
+            id,
+        }
+    }
+    pub fn misc(id: uuid::Uuid) -> Self {
+        Self {
+            category: Category::Misc,
+            id,
+        }
+    }
+    pub fn tile(id: uuid::Uuid) -> Self {
+        Self {
+            category: Category::Land,
+            id,
+        }
+    }
+
+    pub fn into_item(self) -> Item {
+        [
+            ("cat".to_string(), self.category.into_av()),
+            (
+                "id".to_string(),
+                AttributeValue {
+                    s: Some(self.id.to_string()),
+                    ..Default::default()
+                },
+            ),
+        ]
+        .iter()
+        .cloned()
+        .collect()
+    }
+
+    pub fn from_item(i: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        Ok(Self {
+            category: Category::from_av(i.get("cat").ok_or(MissingField("cat"))?)?,
+            id: uuid::Uuid::parse_str(
+                i.get("id")
+                    .ok_or(MissingField("id"))?
+                    .s
+                    .as_ref()
+                    .ok_or(WronglyTypedField("id"))?,
+            )
+            .map_err(|e| IdFieldParse("id", e))?,
+        })
     }
 }
 
@@ -366,17 +605,16 @@ impl Hacksteader {
     }
 
     #[allow(dead_code)]
-    pub async fn delete_possession(
-        db: &DynamoDbClient,
-        possession: &Possession,
-    ) -> Result<(), RusotoError<DeleteItemError>> {
-        db.delete_item(rusoto_dynamodb::DeleteItemInput {
-            key: possession.empty_item(),
+    pub async fn delete(db: &DynamoDbClient, key: Key) -> Result<(), String> {
+        match db.delete_item(rusoto_dynamodb::DeleteItemInput {
+            key: key.into_item(),
             table_name: TABLE_NAME.to_string(),
             ..Default::default()
         })
-        .await
-        .map(|_| ())
+        .await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("couldn't delete in db: {}", e))
+        }
     }
 
     pub async fn transfer_possession(
@@ -387,30 +625,36 @@ impl Hacksteader {
     ) -> Result<(), String> {
         db.update_item(rusoto_dynamodb::UpdateItemInput {
             table_name: TABLE_NAME.to_string(),
-            key: possession.empty_item(),
-            update_expression: Some(concat!(
-                "SET ",
-                "steader = :new_owner, ",
-                "ownership_log = list_append(ownership_log, :ownership_entry)",
-            ).to_string()),
+            key: possession.key().into_item(),
+            update_expression: Some(
+                concat!(
+                    "SET ",
+                    "steader = :new_owner, ",
+                    "ownership_log = list_append(ownership_log, :ownership_entry)",
+                )
+                .to_string(),
+            ),
             expression_attribute_values: Some(
-                [(
-                    ":new_owner".to_string(),
-                    AttributeValue {
-                        s: Some(new_owner.clone()),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    ":ownership_entry".to_string(),
-                    AttributeValue {
-                        l: Some(vec![Owner {
-                            id: new_owner.clone(),
-                            acquisition,
-                        }.into()]),
-                        ..Default::default()
-                    }
-                )]
+                [
+                    (
+                        ":new_owner".to_string(),
+                        AttributeValue {
+                            s: Some(new_owner.clone()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        ":ownership_entry".to_string(),
+                        AttributeValue {
+                            l: Some(vec![Owner {
+                                id: new_owner.clone(),
+                                acquisition,
+                            }
+                            .into()]),
+                            ..Default::default()
+                        },
+                    ),
+                ]
                 .iter()
                 .cloned()
                 .collect(),
@@ -455,16 +699,27 @@ impl Hacksteader {
         let mut land = Vec::new();
 
         for item in items.iter() {
-            (|| -> Option<()> {
-                match dbg!(Category::from_av(item.get("cat")?).ok()?) {
+            match (|| -> Result<(), AttributeParseError> {
+                use AttributeParseError::*;
+
+                match dbg!(Category::from_av(
+                    item.get("cat").ok_or(MissingField("cat"))?
+                )?) {
                     Category::Profile => profile = Some(HacksteaderProfile::from_item(item)?),
-                    Category::Gotchi => gotchis.push(Possessed::from_possession(Possession::from_item(item)?)?),
+                    Category::Gotchi => {
+                        gotchis.push(Possessed::from_possession(Possession::from_item(item)?)?)
+                    }
                     Category::Misc => inventory.push(Possession::from_item(item)?),
-                    Category::Land => land.push(dbg!(Tile::from_item(item).map_err(|e| println!("tile parse err: {}", e)).ok()?)),
+                    Category::Land => land.push(dbg!(Tile::from_item(item)
+                        .map_err(|e| println!("tile parse err: {}", e))
+                        .ok()?)),
                     _ => unreachable!(),
                 }
-                Some(())
-            })();
+                Ok(())
+            })() {
+                Err(e) => println!("error parsing hackstead item: {}", e),
+                Ok(()) => {}
+            }
         }
 
         Some(Hacksteader {
@@ -492,17 +747,22 @@ impl PossessionKind {
     pub fn category(&self) -> Category {
         match self {
             PossessionKind::Gotchi(_) => Category::Gotchi,
-            _ => Category::Misc
+            _ => Category::Misc,
         }
     }
     fn new(ah: ArchetypeHandle, owner_id: &str) -> Self {
-        match CONFIG.possession_archetypes.get(ah).unwrap_or_else(|| panic!("Unknown archetype: {}", ah)).kind {
+        match CONFIG
+            .possession_archetypes
+            .get(ah)
+            .unwrap_or_else(|| panic!("Unknown archetype: {}", ah))
+            .kind
+        {
             ArchetypeKind::Gotchi(_) => PossessionKind::Gotchi(Gotchi::new(ah, owner_id)),
             ArchetypeKind::Seed(_) => PossessionKind::Seed(Seed::new(ah, owner_id)),
             ArchetypeKind::Keepsake(_) => PossessionKind::Keepsake(Keepsake::new(ah, owner_id)),
         }
     }
-    fn fill_from_item(&mut self, item: &Item) -> Option<()> {
+    fn fill_from_item(&mut self, item: &Item) -> Result<(), AttributeParseError> {
         match self {
             PossessionKind::Gotchi(g) => g.fill_from_item(item),
             PossessionKind::Seed(s) => s.fill_from_item(item),
@@ -516,7 +776,6 @@ impl PossessionKind {
             PossessionKind::Keepsake(k) => k.write_item(item),
         }
     }
-
 
     pub fn as_gotchi(self) -> Option<Gotchi> {
         match self {
@@ -609,10 +868,15 @@ pub struct GotchiHarvestOwner {
     pub harvested: u64,
 }
 impl GotchiHarvestOwner {
-    fn from_item(item: &Item) -> Option<Self> {
-        Some(Self {
-            id: item.get("id")?.s.as_ref()?.clone(),
-            harvested: item.get("harvested")?.n.as_ref()?.parse().ok()?,
+    fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        Ok(Self {
+            id: item.get("id").ok_or(MissingField("id"))?.s.as_ref().ok_or(WronglyTypedField("id"))?.clone(),
+            harvested: item
+                .get("harvested").ok_or(MissingField("harvested"))?
+                .n.as_ref().ok_or(WronglyTypedField("harvested"))?
+                .parse().map_err(|e| IntFieldParse("harvested", e))?,
         })
     }
 }
@@ -663,9 +927,17 @@ impl std::ops::Deref for Gotchi {
     type Target = GotchiArchetype;
 
     fn deref(&self) -> &Self::Target {
-        match &CONFIG.possession_archetypes.get(self.archetype_handle).expect("invalid archetype handle").kind {
+        match &CONFIG
+            .possession_archetypes
+            .get(self.archetype_handle)
+            .expect("invalid archetype handle")
+            .kind
+        {
             ArchetypeKind::Gotchi(g) => g,
-            _ => panic!("gotchi has non-gotchi archetype handle {}", self.archetype_handle)
+            _ => panic!(
+                "gotchi has non-gotchi archetype handle {}",
+                self.archetype_handle
+            ),
         }
     }
 }
@@ -681,17 +953,30 @@ impl Gotchi {
             }],
         }
     }
-    fn fill_from_item(&mut self, item: &Item) -> Option<()> {
-        self.nickname = item.get("nickname")?.s.as_ref()?.clone();
+    fn fill_from_item(&mut self, item: &Item) -> Result<(), AttributeParseError> {
+        use AttributeParseError::*;
+
+        self.nickname = item
+            .get("nickname").ok_or(MissingField("nickname"))?
+            .s.as_ref().ok_or(WronglyTypedField("nickname"))?
+            .clone();
         self.harvest_log = item
-            .get("harvest_log")?
-            .l
-            .as_ref()?
+            .get("harvest_log").ok_or(MissingField("harvest_log"))?
+            .l.as_ref().ok_or(WronglyTypedField("harvest_log"))?
             .iter()
-            .filter_map(|v| GotchiHarvestOwner::from_item(v.m.as_ref()?))
+            .filter_map(|v| {
+                match v.m.as_ref() {
+                    Some(m) => match GotchiHarvestOwner::from_item(m) {
+                        Ok(o) => return Some(o),
+                        Err(e) => println!("error parsing item in harvest log {}", e),
+                    },
+                    None => println!("non-map item in harvest log"),
+                };
+                None
+            })
             .collect();
 
-        Some(())
+        Ok(())
     }
     fn write_item(&self, item: &mut Item) {
         item.insert(
@@ -726,16 +1011,26 @@ impl Seed {
             }],
         }
     }
-    fn fill_from_item(&mut self, item: &Item) -> Option<()> {
+    fn fill_from_item(&mut self, item: &Item) -> Result<(), AttributeParseError> {
+        use AttributeParseError::*; 
+
         self.pedigree = item
-            .get("pedigree")?
-            .l
-            .as_ref()?
+            .get("pedigree").ok_or(MissingField("pedigree"))?
+            .l.as_ref().ok_or(WronglyTypedField("pedigree"))?
             .iter()
-            .filter_map(|v| SeedGrower::from_item(v.m.as_ref()?))
+            .filter_map(|v| {
+                match v.m.as_ref() {
+                    Some(m) => match SeedGrower::from_item(m) {
+                        Ok(s) => return Some(s),
+                        Err(e) => println!("error parsing pedigree item: {}", e),
+                    },
+                    None => println!("non-map item in pedigree"),
+                };
+                None
+            })
             .collect();
 
-        Some(())
+        Ok(())
     }
     fn write_item(&self, item: &mut Item) {
         item.insert(
@@ -751,18 +1046,18 @@ impl Keepsake {
     fn new(archetype_handle: ArchetypeHandle, _owner_id: &str) -> Self {
         Self { archetype_handle }
     }
-    fn fill_from_item(&mut self, _item: &Item) -> Option<()> {
-        Some(())
+    fn fill_from_item(&mut self, _item: &Item) -> Result<(), AttributeParseError> {
+        Ok(())
     }
     fn write_item(&self, _item: &mut Item) {}
 }
 #[test]
-fn gotchi_serialize() {
+fn gotchi_serialize() -> Result<(), AttributeParseError> {
     dotenv::dotenv().ok();
 
     let og = Gotchi::new(
         CONFIG
-            .archetypes
+            .possession_archetypes
             .iter()
             .position(|x| x.name == "Adorpheus")
             .unwrap(),
@@ -773,9 +1068,11 @@ fn gotchi_serialize() {
     og.write_item(&mut og_item);
 
     let mut og_copy = Gotchi::default();
-    og_copy.fill_from_item(&og_item);
+    og_copy.fill_from_item(&og_item)?;
 
     assert_eq!(og, og_copy);
+
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
@@ -797,10 +1094,18 @@ pub struct SeedGrower {
     pub generations: u64,
 }
 impl SeedGrower {
-    fn from_item(item: &Item) -> Option<Self> {
-        Some(Self {
-            id: item.get("id")?.s.as_ref()?.clone(),
-            generations: item.get("generations")?.n.as_ref()?.parse().ok()?,
+    fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        Ok(Self {
+            id: item
+                .get("id").ok_or(MissingField("id"))?
+                .s.as_ref().ok_or(WronglyTypedField("id"))?
+                .clone(),
+            generations: item
+                .get("generations").ok_or(MissingField("generations"))?
+                .n.as_ref().ok_or(WronglyTypedField("generations"))?
+                .parse().map_err(|e| IntFieldParse("generations", e))?,
         })
     }
 }
@@ -852,10 +1157,19 @@ pub struct Owner {
     pub acquisition: Acquisition,
 }
 impl Owner {
-    fn from_item(item: &Item) -> Option<Self> {
-        Some(Self {
-            id: item.get("id")?.s.as_ref()?.to_string(),
-            acquisition: Acquisition::from_item(item.get("acquisition")?.m.as_ref()?)?,
+    fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        Ok(Self {
+            id: item
+                .get("id").ok_or(MissingField("id"))?
+                .s.as_ref().ok_or(WronglyTypedField("id"))?
+                .clone(),
+            acquisition: Acquisition::from_item(
+                item
+                    .get("acquisition").ok_or(MissingField("acquisition"))?
+                    .m.as_ref().ok_or(WronglyTypedField("acquisition"))?
+            )?,
         })
     }
 }
@@ -904,17 +1218,22 @@ pub enum Acquisition {
     Purchase { price: u64 },
 }
 impl Acquisition {
-    fn from_item(item: &Item) -> Option<Self> {
-        let kind = item.get("type")?.s.as_ref()?.to_string();
+    fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        let kind = item
+            .get("type").ok_or(MissingField("type"))?
+            .s.as_ref().ok_or(WronglyTypedField("type"))?
+            .clone();
         match kind.as_str() {
-            "Trade" => Some(Acquisition::Trade),
-            "Purchase" => Some(Acquisition::Purchase {
-                price: item.get("price")?.n.as_ref()?.parse().ok()?,
+            "Trade" => Ok(Acquisition::Trade),
+            "Purchase" => Ok(Acquisition::Purchase {
+                price: item
+                    .get("price").ok_or(MissingField("price"))?
+                    .n.as_ref().ok_or(WronglyTypedField("price"))?
+                    .parse().map_err(|e| IntFieldParse("price", e))?,
             }),
-            _ => {
-                println!("unknown Acquisition type");
-                None
-            }
+            _ => Err(Custom("unknown Acquisition type")),
         }
     }
     pub fn spawned() -> Self {
@@ -994,7 +1313,7 @@ pub struct Possessed<P: Possessable> {
     pub id: uuid::Uuid,
     pub steader: String,
     pub ownership_log: Vec<Owner>,
-    pub sale: Option<market::Sale>
+    pub sale: Option<market::Sale>,
 }
 impl<P: Possessable> std::convert::TryFrom<Possession> for Possessed<P> {
     type Error = &'static str;
@@ -1013,7 +1332,7 @@ impl<P: Possessable> Possessed<P> {
             id,
             steader,
             ownership_log,
-            sale
+            sale,
         } = p;
 
         Some(Self {
@@ -1022,17 +1341,17 @@ impl<P: Possessable> Possessed<P> {
             id,
             steader,
             ownership_log,
-            sale
+            sale,
         })
     }
     pub fn into_possession(self) -> Possession {
-         let Self {
+        let Self {
             inner,
             archetype_handle,
             id,
             steader,
             ownership_log,
-            sale
+            sale,
         } = self;
 
         Possession {
@@ -1041,9 +1360,9 @@ impl<P: Possessable> Possessed<P> {
             id,
             steader,
             ownership_log,
-            sale
+            sale,
         }
-   }
+    }
 }
 
 impl<P: Possessable> std::ops::Deref for Possessed<P> {
@@ -1055,7 +1374,7 @@ impl<P: Possessable> std::ops::Deref for Possessed<P> {
 }
 
 impl<P: Possessable> Possessed<P> {
-   fn archetype(&self) -> &Archetype {
+    fn archetype(&self) -> &Archetype {
         CONFIG
             .possession_archetypes
             .get(self.archetype_handle)
@@ -1070,7 +1389,7 @@ pub struct Possession {
     pub id: uuid::Uuid,
     pub steader: String,
     pub ownership_log: Vec<Owner>,
-    pub sale: Option<market::Sale>
+    pub sale: Option<market::Sale>,
 }
 
 impl std::ops::Deref for Possession {
@@ -1089,14 +1408,14 @@ impl Possession {
             archetype_handle,
             steader: owner.id.clone(),
             ownership_log: vec![owner],
-            sale: None
+            sale: None,
         }
     }
-    
+
     pub fn nickname(&self) -> &str {
         match self.kind {
             PossessionKind::Gotchi(ref g) => &g.nickname,
-            _ => &self.name
+            _ => &self.name,
         }
     }
 
@@ -1107,24 +1426,15 @@ impl Possession {
             .expect("invalid archetype handle")
     }
 
-    pub fn empty_item(&self) -> Item {
-        [
-            (
-                "id".to_string(),
-                AttributeValue {
-                    s: Some(self.id.to_string()),
-                    ..Default::default()
-                },
-            ),
-            ("cat".to_string(), self.kind.category().into_av()),
-        ]
-        .iter()
-        .cloned()
-        .collect()
+    pub fn key(&self) -> Key {
+        Key {
+            id: self.id.clone(),
+            category: self.kind.category(),
+        }
     }
 
     fn item(&self) -> Item {
-        let mut m = self.empty_item();
+        let mut m = self.key().into_item();
         m.insert(
             "steader".to_string(),
             AttributeValue {
@@ -1156,34 +1466,49 @@ impl Possession {
         m
     }
 
-    pub fn from_item(item: &Item) -> Option<Self> {
-        let steader = item.get("steader")?.s.as_ref()?.clone();
-        let id = uuid::Uuid::parse_str(item.get("id")?.s.as_ref()?).ok()?;
-        let category = Category::from_av(item.get("cat")?).ok()?;
+    pub fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        let steader = item
+            .get("steader").ok_or(MissingField("steader"))?
+            .s.as_ref().ok_or(WronglyTypedField("steader"))?
+            .clone();
+        let Key { id, category } = Key::from_item(item)?;
 
         // make sure this is the right category of item
-        let archetype_handle = item.get("archetype_handle")?.n.as_ref()?.parse().ok()?;
+        let archetype_handle = item
+            .get("archetype_handle").ok_or(MissingField("archetype_handle"))?
+            .n.as_ref().ok_or(WronglyTypedField("archetype_handle"))?
+            .parse().map_err(|e| IntFieldParse("archetype_handle", e))?;
 
         let mut kind = PossessionKind::new(archetype_handle, &steader);
-        kind.fill_from_item(item);
+        kind.fill_from_item(item)?;
 
         if category == kind.category() {
-            Some(Self {
+            Ok(Self {
                 steader,
                 kind,
                 archetype_handle,
                 id,
                 ownership_log: item
-                    .get("ownership_log")?
-                    .l
-                    .as_ref()?
+                    .get("ownership_log").ok_or(MissingField("ownership_log"))?
+                    .l.as_ref().ok_or(WronglyTypedField("ownership_log"))?
                     .iter()
-                    .map(|x| Owner::from_item(x.m.as_ref()?))
-                    .collect::<Option<_>>()?,
-                sale: market::Sale::from_item(item)
+                    .filter_map(|x| {
+                        match x.m.as_ref() {
+                            Some(m) => match Owner::from_item(m) {
+                                Ok(o) => return Some(o),
+                                Err(e) => println!("error parsing item in ownership log: {}", e),
+                            },
+                            None => println!("non-map item in ownership log")
+                        };
+                        None
+                    })
+                    .collect(),
+                sale: market::Sale::from_item(item).ok(),
             })
         } else {
-            None
+            Err(Custom("Category mismatch"))
         }
     }
 }
@@ -1193,7 +1518,7 @@ fn possessed_gotchi_serialize() {
 
     let og = Possession::new(
         CONFIG
-            .archetypes
+            .possession_archetypes
             .iter()
             .position(|x| x.name == "Adorpheus")
             .unwrap(),
@@ -1203,7 +1528,7 @@ fn possessed_gotchi_serialize() {
         },
     );
 
-    let og_item = og.item("bob".to_string());
+    let og_item = og.item();
 
     assert_eq!(og, Possession::from_item(&og_item).unwrap());
 }
@@ -1211,7 +1536,7 @@ fn possessed_gotchi_serialize() {
 pub struct HacksteaderProfile {
     /// Indicates when this Hacksteader first joined the elite community.
     pub joined: SystemTime,
-    /// This is actually the steader id of the person who owns this Profile
+    /// This is not an uuid::Uuid because it's actually the steader id of the person who owns this Profile
     pub id: String,
 }
 impl HacksteaderProfile {
@@ -1224,16 +1549,16 @@ impl HacksteaderProfile {
 
     /// Returns an empty profile Item for the given slack ID.
     /// Useful for searching for a given slack user's Hacksteader profile
-    fn empty_item(&self) -> Item {
+    fn key_item(id: String) -> Item {
         [
+            ("cat".to_string(), Category::Profile.into_av()),
             (
                 "id".to_string(),
                 AttributeValue {
-                    s: Some(self.id.clone()),
+                    s: Some(id),
                     ..Default::default()
                 },
             ),
-            ("cat".to_string(), Category::Profile.into_av()),
         ]
         .iter()
         .cloned()
@@ -1241,7 +1566,7 @@ impl HacksteaderProfile {
     }
 
     pub fn item(&self) -> Item {
-        let mut m = self.empty_item();
+        let mut m = Self::key_item(self.id.clone());
         m.insert(
             "steader".to_string(),
             AttributeValue {
@@ -1259,13 +1584,20 @@ impl HacksteaderProfile {
         m
     }
 
-    pub fn from_item(item: &Item) -> Option<Self> {
-        Some(Self {
-            id: item.get("id")?.s.as_ref()?.clone(),
-            joined: item
-                .get("joined")
-                .and_then(|a| a.s.as_ref())
-                .and_then(|s| parse_rfc3339(s).ok())?,
+    pub fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+        Ok(Self {
+            id: item
+                    .get("id").ok_or(MissingField("id"))?
+                    .s.as_ref().ok_or(WronglyTypedField("id"))?
+                    .clone(),
+            joined: parse_rfc3339(
+                item.get("joined")
+                    .ok_or(MissingField("joined"))?
+                    .s
+                    .as_ref()
+                    .ok_or(WronglyTypedField("joined"))?,
+            ).map_err(|e| TimeFieldParse("joined", e))?,
         })
     }
 }

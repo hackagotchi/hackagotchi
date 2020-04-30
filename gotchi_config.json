@@ -6,7 +6,75 @@
     "plant_archetypes": [
         {
             "name": "Bractus",
-            "seed_name": "Bractus Seed"
+            "advancements": [
+                {
+                    "xp": 20,
+                    "title": "IPO",
+                    "description": "Get resources every hour!",
+                    "achiever_title": "Plant Startup",
+                    "kind": {
+                        "Yield": {
+                            "resources": [
+                                [1.2, "Bread Essence"]
+                            ]
+                        }
+                    }
+                },
+                {
+                    "xp": 50,
+                    "title": "Chugging Along",
+                    "description": "Resources 25% more often!",
+                    "achiever_title": "Plant in _Train_ing",
+                    "kind": {
+                        "YieldSpeed": {
+                            "increase": 0.25
+                        }
+                    }
+                },
+                {
+                    "xp": 90,
+                    "title": "Get Lucky",
+                    "description": "Rare resources now available!",
+                    "achiever_title": "Daft Plant",
+                    "kind": {
+                        "Yield": {
+                            "resources": [
+                                [0.0002, "Bread Egg"]
+                            ]
+                        }
+                    }
+                },
+                {
+                    "xp": 150,
+                    "title": "Like a Good Neighbor",
+                    "description": "Yields happen 20% more often for neighboring plants!",
+                    "achiever_title": "Farm Plant",
+                    "kind": {
+                        "YieldNeighboringSpeed": {
+                            "increase": 0.2
+                        }
+                    }
+                },
+                {
+                    "xp": 240,
+                    "title": "Puberty",
+                    "description": "You can now craft Eggs at this plant!",
+                    "achiever_title": "Uncomfortable Plant",
+                    "kind": {
+                        "Craft": {
+                            "recipes": [
+                                {
+                                    "needs": [
+                                        [50, "Hacker Spirit"],
+                                        [50, "Energy Crystals"]
+                                    ],
+                                    "makes": "Bread Egg"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
         }
     ],
     "possession_archetypes": [
