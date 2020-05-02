@@ -19,17 +19,17 @@ pub struct Config {
     pub possession_archetypes: Vec<Archetype>,
 }
 impl Config {
-    fn find_plant<S: AsRef<String>>(&self, name: S) -> Option<PlantArchetype> {
+    fn find_plant<S: AsRef<str>>(&self, name: &S) -> Option<&PlantArchetype> {
         self
             .plant_archetypes
             .iter()
-            .find(|x| name.as_ref() == sa.grows_into)
+            .find(|x| name.as_ref() == x.name)
     }
-    fn find_possession<S: AsRef<String>>(&self, name: S) -> Option<Archetype> {
+    fn find_possession<S: AsRef<str>>(&self, name: &S) -> Option<&Archetype> {
         self
             .possession_archetypes
             .iter()
-            .find(|x| name.as_ref() == sa.grows_into)
+            .find(|x| name.as_ref() == x.name)
     }
 }
 pub type ArchetypeHandle = usize;
@@ -60,7 +60,6 @@ pub struct Archetype {
 #[derive(Deserialize, Debug)]
 pub struct PlantArchetype {
     pub name: String,
-    pub seed_name: String,
     pub advancements: Vec<Advancement>,
 }
 #[derive(Deserialize, Debug)]
@@ -71,10 +70,10 @@ pub struct Recipe {
 #[derive(Deserialize, Debug)]
 pub enum AdvancementKind {
     YieldSpeed {
-        increase: f32,
+        multiplier: f32,
     },
-    YieldNeighboringSpeed {
-        increase: f32
+    YieldNeighboringSize {
+        multiplier: f32
     },
     Yield {
         resources: Vec<(f32, String)>,
@@ -111,7 +110,7 @@ fn archetype_name_matches() {
     for a in CONFIG.possession_archetypes.iter() {
         match &a.kind {
             ArchetypeKind::Seed(sa) => assert!(
-                CONFIG.find_plant(sa.grows_into).is_some(),
+                CONFIG.find_plant(&sa.grows_into).is_some(),
                 "seed archetype {:?} claims it grows into unknown plant archetype {:?}",
                 a.name,
                 sa.grows_into,
@@ -130,23 +129,34 @@ fn archetype_name_matches() {
                         assert!(
                             CONFIG.find_possession(item_name).is_some(),
                             "Yield advancement {:?} for plant {:?} includes unknown resource {:?}",
-                            adv.name,
+                            adv.title,
                             arch.name,
                             item_name,
                         )
                     }
                 }
                 Craft { recipes } => {
-                    for Recipe { makes, resources } in resources.iter() {
+                    for Recipe { makes, needs } in recipes.iter() {
                         assert!(
-                            CONFIG.find_possession(item_name).is_some(),
-                            "Crafting advancement {:?} for plant {:?} includes unknown resource {:?}",
-                            adv.name,
+                            CONFIG.find_possession(makes).is_some(),
+                            "Crafting advancement {:?} for plant {:?} produces unknown resource {:?}",
+                            adv.title,
                             arch.name,
-                            item_name,
-                        )
+                            makes,
+                        );
+                        for (_, resource) in needs.iter() {
+                            assert!(
+                                CONFIG.find_possession(resource).is_some(),
+                                "Crafting advancement {:?} for plant {:?} uses unknown resource {:?} in recipe for {:?}",
+                                adv.title,
+                                arch.name,
+                                resource,
+                                makes
+                            )
+                        }
                     }
                 }
+                _ => {}
             }
         }
     }
@@ -999,6 +1009,21 @@ impl Gotchi {
                 ..Default::default()
             },
         );
+    }
+}
+impl std::ops::Deref for Seed {
+    type Target = SeedArchetype;
+
+    fn deref(&self) -> &Self::Target {
+        match CONFIG
+            .possession_archetypes
+            .get(self.archetype_handle)
+            .expect("invalid archetype handle")
+            .kind
+        {
+            ArchetypeKind::Seed(ref s) => s,
+            _ => panic!("archetype kind corresponds to archetype of a different type")
+        }
     }
 }
 impl Seed {

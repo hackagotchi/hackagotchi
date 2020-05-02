@@ -1566,8 +1566,54 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     use rocket_contrib::serve::StaticFiles;
+
+    tokio::task::spawn({
+        use std::time::{Duration, SystemTime};
+        use tokio::time::interval;
+
+        const FARM_CYCLE_MILLIS: u128 = 15 * 1000;
+        const TIME_FILE: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/last_farming.time");
+
+        let mut interval = interval(Duration::from_millis(
+            FARM_CYCLE_MILLIS
+                .try_into()
+                .expect("too many farm cycle millis")
+        ));
+
+        let mut last_farm = {
+            let raw = std::fs::read_to_string(TIME_FILE)
+                .unwrap_or_else(|e| panic!("couldn't read {}: {}", TIME_FILE, e));
+            humantime::parse_rfc3339(raw.trim())
+                .unwrap_or_else(|e| panic!("couldn't parse {} from {}: {}", raw.trim(), TIME_FILE, e))
+        };
+
+        async move {
+            loop {
+                let elapsed = SystemTime::now().duration_since(last_farm).unwrap().as_millis() / FARM_CYCLE_MILLIS;
+                println!("apparently {} farming cycles should occur", elapsed);
+                if elapsed > 0 {
+                    last_farm += Duration::from_millis(
+                        (FARM_CYCLE_MILLIS * elapsed)
+                            .try_into()
+                            .unwrap_or_else(|e| {
+                                println!("too many farm cycle millis * elapsed[{}]: {}", elapsed, e);
+                                0
+                            })
+                    );
+                    std::fs::write(
+                        TIME_FILE,
+                        humantime::format_rfc3339_millis(last_farm).to_string(),
+                    ).unwrap_or_else(|e| {
+                        println!("couldn't write latest farm time {:?} to {:?}: {}", last_farm, TIME_FILE, e);
+                    });
+                }
+                interval.tick().await;
+            }
+        }
+    });
 
     dotenv::dotenv().ok();
 
@@ -1580,6 +1626,9 @@ fn main() {
             "/gotchi/img",
             StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
         )
-        .launch()
+        .serve()
+        .await
         .expect("launch fail");
+
+    Ok(())
 }
