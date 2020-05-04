@@ -1,0 +1,98 @@
+[
+    {
+        "name": "Bractus",
+        "advancements": {
+            "base": {
+                "xp": 0,
+                "title": "Bractus Beginnings",
+                "description": "Right now this Bractus can only produce XP, but he's eager to do more!",
+                "achiever_title": "Bractus Seedling",
+                "kind": {
+                    "Xp": {
+                        "multiplier": 1
+                    }
+                }
+            },
+            "rest": [
+                {
+                    "xp": 20,
+                    "title": "Doughy Drought",
+                    "description": "This Bractus will provide one Bread Essence every hour",
+                    "achiever_title": "Dry Loaf",
+                    "kind": {
+                        "Yield": {
+                            "resources": [
+                                [1.2, "Bread Essence"]
+                            ]
+                        }
+                    }
+                },
+                {
+                    "xp": 50,
+                    "title": "Journey to the Yeast",
+                    "description": "The Bread Heavens part and bestow 25% faster production on your Bractus",
+                    "achiever_title": "Old Pan of the Desert",
+                    "kind": {
+                        "YieldSpeed": {
+                            "multiplier": 1.25
+                        }
+                    }
+                },
+                {
+                    "xp": 90,
+                    "title": "On the Third Day",
+                    "description": "Your Bractus has ascended in ability. It is now able to yield rare resources.",
+                    "achiever_title": "Rose Bractus",
+                    "kind": {
+                        "Yield": {
+                            "resources": [
+                                [0.0002, "Bread Egg"]
+                            ]
+                        }
+                    }
+                },
+                {
+                    "xp": 150,
+                    "title": "Bittersweet Voyage",
+                    "description": "This Bractus imparts its wisdom unto neighboring Bracti, allowing them 20% more bountiful yields",
+                    "achiever_title": "Sourguarodough",
+                    "kind": {
+                        "YieldNeighboringSize": {
+                            "multiplier": 1.2
+                        }
+                    }
+                },
+                {
+                    "xp": 240,
+                    "title": "And Then The Rain Fell",
+                    "description": "This Bractus has lived long and now can spread its kin among the vast reaches of the desert.",
+                    "achiever_title": "Soggyarodough",
+                    "kind": {
+                        "Craft": {
+                            "recipes": [
+                                {
+                                    "needs": [
+                                        [50, "Hacker Spirit"],
+                                        [50, "Crystallis"]
+                                    ],
+                                    "makes": "Bread Egg"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "xp": 400,
+                    "title": "Rockin' and Rollin'",
+                    "description": "Tall and proud with the horizon extended ahead, this Bractus gives you produces resources at a 50% higher rate.",
+                    "achiever_title": "Lone Star Bractus",
+                    "kind": {
+                        "YieldSpeed": {
+                            "multiplier": 1.5
+                        }
+                    }
+                }
+            ]
+        }
+    }
+]

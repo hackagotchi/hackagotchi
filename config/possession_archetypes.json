@@ -1,0 +1,64 @@
+[
+        {
+            "name": "Adorpheus",
+            "kind": {
+                "Gotchi": {
+                    "base_happiness": 3
+                }
+            }
+        },
+        {
+            "name": "Gempheus",
+            "kind": {
+                "Gotchi": {
+                    "base_happiness": 3
+                }
+            }
+        },
+        {
+            "name": "Hackpheus",
+            "kind": {
+                "Gotchi": {
+                    "base_happiness": 3
+                }
+            }
+        },
+        {
+            "name": "Crystallis",
+            "kind": {
+                "Keepsake": null
+            }
+        },
+        {
+            "name": "Hacker Spirit",
+            "kind": {
+                "Keepsake": null
+            }
+        },
+        {
+            "name": "Hacker Egg",
+            "kind": {
+                "Keepsake": null
+            }
+        },
+        {
+            "name": "Bractus Seed",
+            "kind": {
+                "Seed": {
+                    "grows_into": "Bractus"
+                }
+            }
+        },
+        {
+            "name": "Bread Essence",
+            "kind": {
+                "Keepsake": null
+            }
+        },
+        {
+            "name": "Bread Egg",
+            "kind": {
+                "Keepsake": null
+            }
+        }
+    ]

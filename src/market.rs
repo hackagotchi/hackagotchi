@@ -13,15 +13,21 @@ impl Sale {
 
         Ok(Sale {
             market_name: i
-                .get("market_name").ok_or(MissingField("market_name"))?
-                .s.as_ref().ok_or(WronglyTypedField("market_name"))?
+                .get("market_name")
+                .ok_or(MissingField("market_name"))?
+                .s
+                .as_ref()
+                .ok_or(WronglyTypedField("market_name"))?
                 .clone(),
             price: i.get("price")?.n.as_ref()?.parse().ok()?,
         })
     }
 }
 
-pub async fn market_search(db: &DynamoDbClient, cat: Category) -> Result<Vec<(Sale, Possession)>, String> {
+pub async fn market_search(
+    db: &DynamoDbClient,
+    cat: Category,
+) -> Result<Vec<(Sale, Possession)>, String> {
     let query = db
         .query(rusoto_dynamodb::QueryInput {
             table_name: hacksteader::TABLE_NAME.to_string(),
@@ -37,20 +43,19 @@ pub async fn market_search(db: &DynamoDbClient, cat: Category) -> Result<Vec<(Sa
         })
         .await;
 
-    Ok(
-        query
-            .map_err(|e| dbg!(format!("Couldn't search market: {}", e)))?
-            .items.ok_or_else(|| format!("query returned no items"))?
-            .iter_mut()
-            .filter_map(|i| match Possession::from_item(i) {
-                Ok(mut pos) => Some((pos.sale.take()?, pos)),
-                Err(e) => {
-                    println!("error parsing possession: {}", e);
-                    None
-                }
-            })
-            .collect(),
-    )
+    Ok(query
+        .map_err(|e| dbg!(format!("Couldn't search market: {}", e)))?
+        .items
+        .ok_or_else(|| format!("market search query returned no items"))?
+        .iter_mut()
+        .filter_map(|i| match Possession::from_item(i) {
+            Ok(mut pos) => Some((pos.sale.take()?, pos)),
+            Err(e) => {
+                println!("error parsing possession: {}", e);
+                None
+            }
+        })
+        .collect())
 }
 
 pub async fn place_on_market(

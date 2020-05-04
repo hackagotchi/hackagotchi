@@ -3,12 +3,14 @@
 #![feature(try_trait)]
 #![recursion_limit = "512"]
 use rocket::request::LenientForm;
+use rocket::tokio;
 use rocket::{post, routes, FromForm};
 use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::convert::TryInto;
 
+mod config;
 mod banker;
 mod hacksteader;
 mod market;
@@ -291,10 +293,6 @@ fn hackstead_blocks(
     )));
 
     blocks.push(json!({ "type": "divider" }));
-/*match tile.plant.as_ref() {
-                    Some(p) => format!("http://{}/gotchi/img/plant/{}/{}.png", *URL, p.name.to_lowercase(), p.xp),
-                    None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
-                }*/
     for tile in hs.land.into_iter() {
         blocks.push(json!({
             "type": "section",
@@ -304,7 +302,10 @@ fn hackstead_blocks(
             }),
             "accessory": {
                 "type": "image",
-                "image_url": format!("http://{}/gotchi/img/misc/dirt.png", *URL),
+                "image_url": match tile.plant.as_ref() {
+                    Some(p) => format!("http://{}/gotchi/img/plant/{}.png", *URL, p.name.to_lowercase()),
+                    None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
+                },
                 "alt_text": match tile.plant.as_ref() {
                     Some(p) => format!("A healthy, growing {}!", p.name),
                     None => "Land, waiting to be monopolized upon!".to_string(),
@@ -1051,7 +1052,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                                 "action_id": "possession_give_receiver_input",
                                 "placeholder": plain_text("Who Really Gets your Gotchi?"),
                                 "initial_user": ({
-                                    let s = &hacksteader::CONFIG.special_users;
+                                    let s = &config::CONFIG.special_users;
                                     &s.get(page_json.len() % s.len()).unwrap_or(&*ID)
                                 }),
                                 "confirm": {
@@ -1093,7 +1094,7 @@ async fn action_endpoint(action_data: LenientForm<ActionData>) -> Result<ActionR
                                 "placeholder": plain_text("Which seed do ya wanna plant?"),
                                 "action_id": "seed_plant_select",
                                 // show them each seed they have that grows a given plant
-                                "option_groups": hacksteader::CONFIG
+                                "option_groups": config::CONFIG
                                     .plant_archetypes
                                     .iter()
                                     .enumerate()
@@ -1217,7 +1218,7 @@ pub struct Message<'a> {
 
 #[post("/event", format = "application/json", data = "<e>", rank = 1)]
 async fn event(e: Json<Event<'_>>) -> Result<(), String> {
-    use hacksteader::CONFIG;
+    use config::CONFIG;
 
     let Event { reply: r } = (*e).clone();
     println!("{:#?}", r);
@@ -1574,42 +1575,121 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         use std::time::{Duration, SystemTime};
         use tokio::time::interval;
 
-        const FARM_CYCLE_MILLIS: u128 = 15 * 1000;
+        const FARM_CYCLE_MILLIS: u64 = 15 * 1000;
         const TIME_FILE: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/last_farming.time");
 
-        let mut interval = interval(Duration::from_millis(
-            FARM_CYCLE_MILLIS
-                .try_into()
-                .expect("too many farm cycle millis")
-        ));
+        let mut interval = interval(Duration::from_millis(FARM_CYCLE_MILLIS));
 
         let mut last_farm = {
             let raw = std::fs::read_to_string(TIME_FILE)
                 .unwrap_or_else(|e| panic!("couldn't read {}: {}", TIME_FILE, e));
-            humantime::parse_rfc3339(raw.trim())
-                .unwrap_or_else(|e| panic!("couldn't parse {} from {}: {}", raw.trim(), TIME_FILE, e))
+            humantime::parse_rfc3339(raw.trim()).unwrap_or_else(|e| {
+                panic!("couldn't parse {} from {}: {}", raw.trim(), TIME_FILE, e)
+            })
         };
 
         async move {
+            use hacksteader::{Tile, Profile, Plant};
+            use std::collections::HashMap;
+
             loop {
-                let elapsed = SystemTime::now().duration_since(last_farm).unwrap().as_millis() / FARM_CYCLE_MILLIS;
-                println!("apparently {} farming cycles should occur", elapsed);
+                let elapsed = SystemTime::now()
+                    .duration_since(last_farm)
+                    .unwrap_or_default()
+                    .as_millis()
+                    / (FARM_CYCLE_MILLIS as u128);
+
+                let db = dyn_db();
+
+                // we can only farm on tiles with plants, and we'll be frequently looking up
+                // profiles by who owns them to award xp.
+                let (mut tiles, mut profiles): (Vec<(Plant, Tile)>, HashMap<String, Profile>) = match futures::try_join!(
+                    Tile::fetch_all(&db),
+                    Profile::fetch_all(&db),
+                ) {
+                    Ok((tiles, profiles)) => (
+                        tiles.into_iter().filter_map(|mut t| Some((t.plant.take()?, t))).collect(),
+                        profiles.into_iter().map(|p| (p.id.clone(), p)).collect()
+                    ),
+                    Err(e) => {
+                        println!("error fetching the tiles and profiles for farming: {}", e);
+                        continue
+                    }
+                };
+
+                println!("triggering {} farming cycles", elapsed);
+                for _ in 0..elapsed {
+                    for (plant, tile) in tiles.iter_mut() {
+                        match profiles.get_mut(&tile.steader) {
+                            Some(profile) => {
+                                profile.xp += 1;
+                                plant.xp += 1;
+                            }
+                            None => {
+                                println!("couldn't get tile[{}]'s steader[{}]'s profile", tile.id, tile.steader);
+                            }
+                        }
+                    }
+                }
+
+                let _ = db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
+                    request_items: [(
+                        hacksteader::TABLE_NAME.to_string(),
+                        tiles
+                            .into_iter()
+                            .map(|(plant, mut tile)| rusoto_dynamodb::WriteRequest {
+                                put_request: Some(rusoto_dynamodb::PutRequest {
+                                    item: {
+                                        tile.plant = Some(plant);
+
+                                        tile
+                                            .into_av()
+                                            .m
+                                            .expect("tile attribute should be map")
+                                    }
+                                }),
+                                ..Default::default()
+                            })
+                            .chain(profiles.iter().map(|(_, p)| rusoto_dynamodb::WriteRequest {
+                                put_request: Some(rusoto_dynamodb::PutRequest {
+                                    item: p.item(),
+                                }),
+                                ..Default::default()
+                            }))
+                            .collect(),
+                    )]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| println!("couldn't write new land into db: {}", e));
+
                 if elapsed > 0 {
                     last_farm += Duration::from_millis(
-                        (FARM_CYCLE_MILLIS * elapsed)
+                        (FARM_CYCLE_MILLIS as u128 * elapsed)
                             .try_into()
                             .unwrap_or_else(|e| {
-                                println!("too many farm cycle millis * elapsed[{}]: {}", elapsed, e);
+                                println!(
+                                    "too many farm cycle millis * elapsed[{}]: {}",
+                                    elapsed, e
+                                );
                                 0
-                            })
+                            }),
                     );
                     std::fs::write(
                         TIME_FILE,
                         humantime::format_rfc3339_millis(last_farm).to_string(),
-                    ).unwrap_or_else(|e| {
-                        println!("couldn't write latest farm time {:?} to {:?}: {}", last_farm, TIME_FILE, e);
+                    )
+                    .unwrap_or_else(|e| {
+                        println!(
+                            "couldn't write latest farm time {:?} to {:?}: {}",
+                            last_farm, TIME_FILE, e
+                        );
                     });
                 }
+
                 interval.tick().await;
             }
         }
