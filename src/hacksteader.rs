@@ -1,5 +1,5 @@
+use super::config::{self, Archetype, ArchetypeHandle, ArchetypeKind, PlantArchetype, CONFIG};
 use super::market;
-use super::config::{self, CONFIG, ArchetypeKind, Archetype, ArchetypeHandle, PlantArchetype};
 use humantime::{format_rfc3339, parse_rfc3339};
 use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
@@ -112,6 +112,11 @@ pub enum AttributeParseError {
     Custom(&'static str),
 }
 
+impl Into<String> for AttributeParseError {
+    fn into(self) -> String {
+        format!("{}", self)
+    }
+}
 impl From<CategoryError> for AttributeParseError {
     fn from(o: CategoryError) -> Self {
         AttributeParseError::CategoryParse(o)
@@ -142,7 +147,10 @@ impl fmt::Display for AttributeParseError {
     }
 }
 
-pub async fn landfill(db: &DynamoDbClient) -> Result<(), String> {
+pub async fn landfill(
+    db: &DynamoDbClient,
+    active_users: &crossbeam_channel::Sender<String>,
+) -> Result<(), String> {
     let tiles = Tile::fetch_all(db).await?;
 
     db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
@@ -153,13 +161,11 @@ pub async fn landfill(db: &DynamoDbClient) -> Result<(), String> {
                 .map(|mut tile| rusoto_dynamodb::WriteRequest {
                     put_request: Some(rusoto_dynamodb::PutRequest {
                         item: {
+                            active_users.send(tile.steader.clone()).unwrap();
                             tile.plant.take();
 
-                            tile
-                                .into_av()
-                                .m
-                                .expect("tile attribute should be map")
-                        }
+                            tile.into_av().m.expect("tile attribute should be map")
+                        },
                     }),
                     ..Default::default()
                 })
@@ -176,7 +182,7 @@ pub async fn landfill(db: &DynamoDbClient) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tile {
     pub acquired: SystemTime,
     pub plant: Option<Plant>,
@@ -312,7 +318,7 @@ impl Tile {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Plant {
     pub xp: u64,
     pub archetype_handle: ArchetypeHandle,
@@ -335,6 +341,23 @@ impl Plant {
             xp: 0,
             archetype_handle: ah,
         }
+    }
+
+    pub fn current_advancement(&self) -> &config::PlantAdvancement {
+        self.advancements.current(self.xp)
+    }
+
+    pub fn next_advancement(&self) -> Option<&config::PlantAdvancement> {
+        self.advancements.next(self.xp)
+    }
+
+    pub fn increment_xp(&mut self) -> Option<&'static config::PlantAdvancement> {
+        CONFIG
+            .plant_archetypes
+            .get(self.archetype_handle)
+            .expect("invalid archetype handle")
+            .advancements
+            .increment_xp(&mut self.xp)
     }
 
     pub fn from_av(av: &AttributeValue) -> Result<Self, AttributeParseError> {
@@ -450,6 +473,7 @@ impl Key {
     }
 }
 
+#[derive(Clone)]
 pub struct Hacksteader {
     pub user_id: String,
     pub profile: Profile,
@@ -458,10 +482,7 @@ pub struct Hacksteader {
     pub gotchis: Vec<Possessed<Gotchi>>,
 }
 impl Hacksteader {
-    pub async fn new_in_db(
-        db: &DynamoDbClient,
-        user_id: String,
-    ) -> Result<(), String> {
+    pub async fn new_in_db(db: &DynamoDbClient, user_id: String) -> Result<(), String> {
         // just give them a profile for now
         db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
             request_items: [(
@@ -569,7 +590,7 @@ impl Hacksteader {
         Ok(())
     }
 
-    pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Option<Self> {
+    pub async fn from_db(db: &DynamoDbClient, user_id: String) -> Result<Self, String> {
         let query = db
             .query(rusoto_dynamodb::QueryInput {
                 table_name: TABLE_NAME.to_string(),
@@ -591,9 +612,9 @@ impl Hacksteader {
             })
             .await;
         let items = query
-            .map_err(|e| println!("couldn't profile query: {}", e))
-            .ok()?
-            .items?;
+            .map_err(|e| format!("couldn't profile query: {}", e))?
+            .items
+            .ok_or_else(|| format!("no items returned from profile query"))?;
 
         let mut profile = None;
         let mut gotchis = Vec::new();
@@ -601,31 +622,40 @@ impl Hacksteader {
         let mut land = Vec::new();
 
         for item in items.iter() {
-            match (|| -> Result<(), AttributeParseError> {
-                use AttributeParseError::*;
+            use AttributeParseError::*;
 
-                match dbg!(Category::from_av(
-                    item.get("cat").ok_or(MissingField("cat"))?
-                )?) {
-                    Category::Profile => profile = Some(Profile::from_item(item)?),
-                    Category::Gotchi => {
-                        gotchis.push(Possessed::from_possession(Possession::from_item(item)?)?)
-                    }
-                    Category::Misc => inventory.push(Possession::from_item(item)?),
-                    Category::Land => land.push(dbg!(Tile::from_item(item)
-                        .map_err(|e| println!("tile parse err: {}", e))
-                        .ok()?)),
-                    _ => unreachable!(),
+            match Category::from_av(
+                item.get("cat")
+                    .ok_or_else(|| format!("{}", MissingField("cat")))?,
+            )
+            .map_err(|e| format!("error parsing hacksteader item category: {}", e))?
+            {
+                Category::Profile => {
+                    profile = Some(
+                        Profile::from_item(item)
+                            .map_err(|e| format!("profile parse err: {}", e))?,
+                    )
                 }
-                Ok(())
-            })() {
-                Err(e) => println!("error parsing hackstead item: {}", e),
-                Ok(()) => {}
+                Category::Gotchi => gotchis.push(
+                    Possessed::from_possession(
+                        Possession::from_item(item)
+                            .map_err(|e| format!("gotchi parse err: {}", e))?,
+                    )
+                    .ok_or_else(|| format!("possession in gotchi category but not gotchi"))?,
+                ),
+                Category::Misc => inventory.push(
+                    Possession::from_item(item)
+                        .map_err(|e| format!("misc inv. item parse err: {}", e))?,
+                ),
+                Category::Land => {
+                    land.push(Tile::from_item(item).map_err(|e| format!("tile parse err: {}", e))?)
+                }
+                _ => unreachable!(),
             }
         }
 
-        Some(Hacksteader {
-            profile: profile?,
+        Ok(Hacksteader {
+            profile: profile.ok_or_else(|| format!("No profile found for {}", user_id))?,
             user_id,
             gotchis,
             inventory,
@@ -1085,6 +1115,24 @@ impl Into<AttributeValue> for SeedGrower {
 pub struct Keepsake {
     archetype_handle: ArchetypeHandle,
 }
+impl std::ops::Deref for Keepsake {
+    type Target = config::KeepsakeArchetype;
+
+    fn deref(&self) -> &Self::Target {
+        match &CONFIG
+            .possession_archetypes
+            .get(self.archetype_handle)
+            .expect("invalid archetype handle")
+            .kind
+        {
+            ArchetypeKind::Keepsake(k) => k,
+            _ => panic!(
+                "keepsake has non-keepsake archetype handle {}",
+                self.archetype_handle
+            ),
+        }
+    }
+}
 impl Possessable for Keepsake {
     fn from_possession_kind(pk: PossessionKind) -> Option<Self> {
         pk.as_keepsake()
@@ -1498,20 +1546,49 @@ fn possessed_gotchi_serialize() {
     assert_eq!(og, Possession::from_item(&og_item).unwrap());
 }
 
+#[derive(Clone)]
 pub struct Profile {
     /// Indicates when this Hacksteader first joined the elite community.
     pub joined: SystemTime,
+    pub last_active: SystemTime,
+    pub last_farm: SystemTime,
     /// This is not an uuid::Uuid because it's actually the steader id of the person who owns this Profile
     pub id: String,
-    pub xp: u64
+    pub xp: u64,
 }
+
+impl std::ops::Deref for Profile {
+    type Target = config::ProfileArchetype;
+
+    fn deref(&self) -> &Self::Target {
+        &CONFIG.profile_archetype
+    }
+}
+
 impl Profile {
     pub fn new(owner_id: String) -> Self {
         Self {
             joined: SystemTime::now(),
+            last_active: SystemTime::now(),
+            last_farm: SystemTime::now(),
             xp: 0,
             id: owner_id,
         }
+    }
+
+    pub fn current_advancement(&self) -> &config::HacksteadAdvancement {
+        self.advancements.current(self.xp)
+    }
+
+    pub fn next_advancement(&self) -> Option<&config::HacksteadAdvancement> {
+        self.advancements.next(self.xp)
+    }
+
+    pub fn increment_xp(&mut self) -> Option<&config::HacksteadAdvancement> {
+        CONFIG
+            .profile_archetype
+            .advancements
+            .increment_xp(&mut self.xp)
     }
 
     pub async fn fetch_all(db: &DynamoDbClient) -> Result<Vec<Profile>, String> {
@@ -1579,6 +1656,20 @@ impl Profile {
             },
         );
         m.insert(
+            "last_active".to_string(),
+            AttributeValue {
+                s: Some(format_rfc3339(self.last_active).to_string()),
+                ..Default::default()
+            },
+        );
+        m.insert(
+            "last_farm".to_string(),
+            AttributeValue {
+                s: Some(format_rfc3339(self.last_farm).to_string()),
+                ..Default::default()
+            },
+        );
+        m.insert(
             "xp".to_string(),
             AttributeValue {
                 n: Some(self.xp.to_string()),
@@ -1599,14 +1690,12 @@ impl Profile {
                 .ok_or(WronglyTypedField("id"))?
                 .clone(),
             xp: match item.get("xp") {
-                Some(xp_attribtue_value) => {
-                    xp_attribtue_value
-                        .n
-                        .as_ref()
-                        .ok_or(WronglyTypedField("xp"))?
-                        .parse()
-                        .map_err(|x| IntFieldParse("xp", x))?
-                }
+                Some(xp_attribtue_value) => xp_attribtue_value
+                    .n
+                    .as_ref()
+                    .ok_or(WronglyTypedField("xp"))?
+                    .parse()
+                    .map_err(|x| IntFieldParse("xp", x))?,
                 None => 0,
             },
             joined: parse_rfc3339(
@@ -1617,6 +1706,22 @@ impl Profile {
                     .ok_or(WronglyTypedField("joined"))?,
             )
             .map_err(|e| TimeFieldParse("joined", e))?,
+            last_active: parse_rfc3339(
+                item.get("last_active")
+                    .ok_or(MissingField("last_active"))?
+                    .s
+                    .as_ref()
+                    .ok_or(WronglyTypedField("last_active"))?,
+            )
+            .map_err(|e| TimeFieldParse("last_active", e))?,
+            last_farm: parse_rfc3339(
+                item.get("last_farm")
+                    .ok_or(MissingField("last_farm"))?
+                    .s
+                    .as_ref()
+                    .ok_or(WronglyTypedField("last_farm"))?,
+            )
+            .map_err(|e| TimeFieldParse("last_farm", e))?,
         })
     }
 }

@@ -84,7 +84,7 @@
                 {
                     "xp": 400,
                     "title": "Rockin' and Rollin'",
-                    "description": "Tall and proud with the horizon extended ahead, this Bractus gives you produces resources at a 50% higher rate.",
+                    "description": "Tall and proud with the horizon extended ahead, this Bractus gives you produces resources at a 50% faster rate.",
                     "achiever_title": "Lone Star Bractus",
                     "kind": {
                         "YieldSpeed": {

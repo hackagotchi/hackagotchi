@@ -26,19 +26,19 @@
         {
             "name": "Crystallis",
             "kind": {
-                "Keepsake": null
+                "Keepsake": {}
             }
         },
         {
             "name": "Hacker Spirit",
             "kind": {
-                "Keepsake": null
+                "Keepsake": {}
             }
         },
         {
             "name": "Hacker Egg",
             "kind": {
-                "Keepsake": null
+                "Keepsake": {}
             }
         },
         {
@@ -52,13 +52,28 @@
         {
             "name": "Bread Essence",
             "kind": {
-                "Keepsake": null
+                "Keepsake": {}
             }
         },
         {
             "name": "Bread Egg",
             "kind": {
-                "Keepsake": null
+                "Keepsake": {}
+            }
+        },
+        {
+            "name": "Warp Powder",
+            "kind": {
+                "Keepsake": {
+                    "plant_applicable": [
+                        "Warp",
+                        {
+                            "TimeIncrease": {
+                                "farming_cycles": 500
+                            }
+                        }
+                    ]
+                }
             }
         }
     ]

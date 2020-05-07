@@ -2,16 +2,17 @@
 #![feature(proc_macro_hygiene)]
 #![feature(try_trait)]
 #![recursion_limit = "512"]
+use crossbeam_channel::Sender;
 use rocket::request::LenientForm;
 use rocket::tokio;
-use rocket::{post, routes, FromForm};
+use rocket::{post, routes, FromForm, State};
 use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::convert::TryInto;
 
-mod config;
 mod banker;
+mod config;
 mod hacksteader;
 mod market;
 
@@ -51,6 +52,9 @@ fn comment<S: ToString>(txt: S) -> Value {
 }
 fn emojify<S: ToString>(txt: S) -> String {
     format!(":{}:", txt.to_string().replace(" ", "_"))
+}
+fn filify<S: ToString>(txt: S) -> String {
+    txt.to_string().to_lowercase().replace(" ", "_")
 }
 
 async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
@@ -147,7 +151,7 @@ impl PossessionPage {
             credentials,
         } = self;
 
-        let actions = |prefix: &str, buttons: &[(&str, Option<&str>)]| -> Value {
+        let actions = |prefix: &str, buttons: &[(&str, Option<Value>)]| -> Value {
             match interactivity {
                 Interactivity::Write => json!({
                     "type": "actions",
@@ -158,7 +162,7 @@ impl PossessionPage {
                             "action_id": format!("{}_{}", prefix, action.to_lowercase()),
                         });
                         if let Some(v) = value {
-                            o.as_object_mut().unwrap().insert("value".to_string(), json!(v.clone()));
+                            o.as_object_mut().unwrap().insert("value".to_string(), v.clone());
                         }
                         o
                     }).collect::<Vec<_>>()
@@ -170,7 +174,7 @@ impl PossessionPage {
         if self.possession.kind.is_gotchi() {
             blocks.push(actions(
                 "gotchi",
-                &[("Nickname", Some(&possession.nickname()))],
+                &[("Nickname", Some(json!(possession.nickname())))],
             ));
         }
 
@@ -207,7 +211,7 @@ impl PossessionPage {
                     "http://{}/gotchi/img/{}/{}.png",
                     *URL,
                     format!("{:?}", possession.kind.category()).to_lowercase(),
-                    possession.name.to_lowercase()
+                    filify(&possession.name)
                 ),
                 "alt_text": "hackagotchi img",
             }
@@ -243,7 +247,7 @@ impl PossessionPage {
 
 async fn update_user_home_tab(user_id: String) -> Result<(), String> {
     update_home_tab(
-        Hacksteader::from_db(&dyn_db(), user_id.clone()).await,
+        Hacksteader::from_db(&dyn_db(), user_id.clone()).await.ok(),
         user_id.clone(),
     )
     .await
@@ -271,6 +275,21 @@ async fn update_home_tab(hs: Option<Hacksteader>, user_id: String) -> Result<(),
     Ok(())
 }
 
+fn progress_bar(size: usize, progress_ratio: f32) -> String {
+    format!(
+        "`\u{2062}{}\u{2062}`",
+        (0..size)
+            .map(|i| {
+                if (i as f32 / size as f32) < progress_ratio {
+                    '\u{2588}'
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>()
+    )
+}
+
 fn hackstead_blocks(
     hs: Hacksteader,
     interactivity: Interactivity,
@@ -282,28 +301,64 @@ fn hackstead_blocks(
     // TODO: with_capacity optimization
     let mut blocks: Vec<Value> = Vec::new();
 
+    let hs_adv = hs.profile.current_advancement();
+    let next_hs_adv = hs.profile.next_advancement();
+
     blocks.push(json!({
         "type": "section",
-        "text": mrkdwn(format!("*_<@{}>'s Hackstead_*", hs.user_id)),
+        "text": mrkdwn(format!("*_<@{}>'s {}_* - _{}xp_", hs.user_id, hs_adv.achiever_title, hs.profile.xp)),
     }));
 
     blocks.push(comment(format!(
         "founded {} ago (roughly)",
         format_duration(SystemTime::now().duration_since(hs.profile.joined).unwrap()),
     )));
+    if let Some(na) = next_hs_adv {
+        blocks.push({
+            let (xp_lo, xp_hi) = (hs_adv.xp, na.xp);
+            let (have, need) = (hs.profile.xp - xp_lo, xp_hi - xp_lo);
+            json!({
+                "type": "section",
+                "text": mrkdwn(format!(
+                    "Next: *{}*\n{}  {}xp to go\n_{}_",
+                    na.title,
+                    progress_bar(50, have as f32 / need as f32),
+                    need - have,
+                    na.description
+                )),
+            })
+        });
+    }
+    blocks.push(comment(format!("Last Advancement: \"{}\"", hs_adv.title)));
 
     blocks.push(json!({ "type": "divider" }));
     for tile in hs.land.into_iter() {
         blocks.push(json!({
             "type": "section",
             "text": mrkdwn(match tile.plant.as_ref() {
-                Some(p) => format!("*{}*", p.name),
+                Some(p) => {
+                    let mut s = String::new();
+                    let ca = p.current_advancement();
+                    s.push_str(&format!("*{}* - _{}_ - {}xp\n\n", p.name, ca.achiever_title, p.xp));
+                    if let Some(na) = p.next_advancement() {
+                        let (xp_lo, xp_hi) = (ca.xp, na.xp);
+                        let (have, need) = (p.xp - xp_lo, xp_hi - xp_lo);
+                        s.push_str(&format!(
+                            "Next: *{}*\n{}  {}xp to go\n_{}_",
+                            na.title,
+                            progress_bar(35, have as f32/need as f32),
+                            need - have,
+                            na.description
+                        ));
+                    }
+                    s
+                },
                 None => "*Empty Land*\n Opportunity Awaits!".to_string()
             }),
             "accessory": {
                 "type": "image",
                 "image_url": match tile.plant.as_ref() {
-                    Some(p) => format!("http://{}/gotchi/img/plant/{}.png", *URL, p.name.to_lowercase()),
+                    Some(p) => format!("http://{}/gotchi/img/plant/{}.png", *URL, filify(&p.name)),
                     None => format!("http://{}/gotchi/img/misc/dirt.png", *URL),
                 },
                 "alt_text": match tile.plant.as_ref() {
@@ -313,7 +368,32 @@ fn hackstead_blocks(
             }
         }));
         match tile.plant {
-            Some(_) => {}
+            Some(p) => {
+                let ca = p.current_advancement();
+                blocks.push(comment(format!("Last Advancement: \"{}\"", ca.title)));
+
+                if let Some(applicables) = Some(
+                    hs
+                        .inventory
+                        .iter()
+                        .filter_map(|x| x.kind.keepsake())
+                        .filter(|x| x.plant_applicable.is_some())
+                        .collect::<Vec<_>>()
+                    )
+                    .filter(|x| !x.is_empty())
+                {
+                    blocks.push(json!({
+                        "type": "actions",
+                        "elements": [{
+                            "type": "button",
+                            "text": plain_text("Apply Item"),
+                            "style": "primary",
+                            "value": serde_json::to_string(&(tile.id.to_simple().to_string(), applicables)).unwrap(),
+                            "action_id": "item_apply_select",
+                        }],
+                    }))
+                }
+            }
             None => {
                 let seeds: Vec<Possessed<hacksteader::Seed>> = hs
                     .inventory
@@ -578,7 +658,7 @@ async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> 
     let hs = Hacksteader::from_db(&dyn_db(), user.to_string()).await;
     Json(json!({
         "blocks": hacksteader_greeting_blocks(
-            hs,
+            hs.ok(),
             Interactivity::Read,
             Credentials::None
         ),
@@ -1217,7 +1297,7 @@ pub struct Message<'a> {
 }
 
 #[post("/event", format = "application/json", data = "<e>", rank = 1)]
-async fn event(e: Json<Event<'_>>) -> Result<(), String> {
+async fn event(active_users: State<'_, Sender<String>>, e: Json<Event<'_>>) -> Result<(), String> {
     use config::CONFIG;
 
     let Event { reply: r } = (*e).clone();
@@ -1253,6 +1333,9 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
     } = r
     {
         println!("Rendering app_home!");
+        active_users
+            .send(user_id.clone())
+            .expect("couldn't send active user");
         update_user_home_tab(user_id.clone()).await?;
     } else if let Some(paid_invoice) =
         banker::parse_paid_invoice(&r).filter(|pi| pi.invoicer == *ID)
@@ -1378,7 +1461,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                             )),
                             "accessory": {
                                 "type": "image",
-                                "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, name.to_lowercase()),
+                                "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, filify(name)),
                                 "alt_text": "Hackpheus sitting on bags of money!",
                             }
                         }),
@@ -1447,7 +1530,7 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
                         )),
                         "accessory": {
                             "type": "image",
-                            "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, gotchi.name.to_lowercase()),
+                            "image_url": format!("http://{}/gotchi/img/gotchi/{}.png", *URL, filify(&gotchi.name)),
                             "alt_text": "Hackpheus holding a Gift!",
                         }
                     }),
@@ -1549,15 +1632,14 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
             println!("dumping {} to {}", dump_amount, dump_to);
             dbg!(banker::pay(dump_to, dump_amount, "GP dump".to_string()).await?);
         }
-        if LANDFILL_REGEX
-            .captures(&r.text)
+        if dbg!(LANDFILL_REGEX.captures(&r.text))
             .and_then(|c| c.get(1))
             .filter(|x| x.as_str() == &*ID)
             .is_some()
         {
             println!("landfill time!");
 
-            match hacksteader::landfill(&dyn_db()).await {
+            match hacksteader::landfill(&dyn_db(), &*active_users).await {
                 Ok(()) => {}
                 Err(e) => println!("landfill error: {}", e),
             }
@@ -1567,11 +1649,21 @@ async fn event(e: Json<Event<'_>>) -> Result<(), String> {
     Ok(())
 }
 
+#[rocket::get("/steadercount")]
+async fn steadercount() -> Result<String, String> {
+    hacksteader::Profile::fetch_all(&dyn_db())
+        .await
+        .map(|profiles| profiles.len().to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     use rocket_contrib::serve::StaticFiles;
 
+    let (tx, rx) = crossbeam_channel::unbounded();
+
     tokio::task::spawn({
+        use std::collections::HashMap;
         use std::time::{Duration, SystemTime};
         use tokio::time::interval;
 
@@ -1579,6 +1671,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         const TIME_FILE: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/last_farming.time");
 
         let mut interval = interval(Duration::from_millis(FARM_CYCLE_MILLIS));
+
+        let mut active_users: HashMap<String, bool> = HashMap::new();
 
         let mut last_farm = {
             let raw = std::fs::read_to_string(TIME_FILE)
@@ -1589,82 +1683,198 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         };
 
         async move {
-            use hacksteader::{Tile, Profile, Plant};
+            use futures::future::TryFutureExt;
+            use futures::stream::{self, StreamExt, TryStreamExt};
+            use hacksteader::{Plant, Profile, Tile};
             use std::collections::HashMap;
 
             loop {
+                for (_, fresh) in active_users.iter_mut() {
+                    *fresh = false;
+                }
+
+                while let Ok(user) = rx.try_recv() {
+                    println!("active: {}", user);
+                    active_users.insert(user, true);
+                }
+
+                interval.tick().await;
+
+                if active_users.is_empty() {
+                    continue;
+                }
+
+                let db = dyn_db();
+
                 let elapsed = SystemTime::now()
                     .duration_since(last_farm)
                     .unwrap_or_default()
                     .as_millis()
                     / (FARM_CYCLE_MILLIS as u128);
 
-                let db = dyn_db();
-
-                // we can only farm on tiles with plants, and we'll be frequently looking up
-                // profiles by who owns them to award xp.
-                let (mut tiles, mut profiles): (Vec<(Plant, Tile)>, HashMap<String, Profile>) = match futures::try_join!(
-                    Tile::fetch_all(&db),
-                    Profile::fetch_all(&db),
-                ) {
-                    Ok((tiles, profiles)) => (
-                        tiles.into_iter().filter_map(|mut t| Some((t.plant.take()?, t))).collect(),
-                        profiles.into_iter().map(|p| (p.id.clone(), p)).collect()
-                    ),
+                let hacksteaders: Vec<Hacksteader> = match stream::iter(active_users.clone())
+                    .map(|(id, _)| Hacksteader::from_db(&db, id))
+                    .buffer_unordered(50)
+                    .try_collect::<Vec<_>>()
+                    .await
+                {
+                    Ok(i) => i,
                     Err(e) => {
-                        println!("error fetching the tiles and profiles for farming: {}", e);
-                        continue
+                        println!("error reading hacksteader from db: {}", e);
+                        continue;
                     }
                 };
+
+                // we'll be frequently looking up profiles by who owns them to award xp.
+                let mut profiles: HashMap<String, Profile> = hacksteaders
+                    .iter()
+                    .map(|hs| (hs.user_id.clone(), hs.profile.clone()))
+                    .collect();
+
+                // we can only farm on tiles with plants,
+                let mut tiles: Vec<(Plant, Tile)> = hacksteaders
+                    .into_iter()
+                    .flat_map(|hs| {
+                        hs.land
+                            .into_iter()
+                            .filter_map(|mut t| Some((t.plant.take()?, t)))
+                    })
+                    .collect();
+
+                let mut dms: Vec<(String, [Value; 2])> = Vec::new();
+
+                for ((_, profile), (user, fresh)) in
+                    profiles.iter_mut().zip(active_users.clone().into_iter())
+                {
+                    let now = std::time::SystemTime::now();
+                    if fresh {
+                        profile.last_active = now;
+                    } else {
+                        const ACTIVE_DURATION: u64 = 60 * 5;
+                        if now
+                            .duration_since(profile.last_active)
+                            .ok()
+                            .filter(|r| dbg!(r.as_secs()) >= ACTIVE_DURATION)
+                            .is_some()
+                        {
+                            active_users.remove(&user);
+                        }
+                    }
+                }
 
                 println!("triggering {} farming cycles", elapsed);
                 for _ in 0..elapsed {
                     for (plant, tile) in tiles.iter_mut() {
                         match profiles.get_mut(&tile.steader) {
                             Some(profile) => {
-                                profile.xp += 1;
-                                plant.xp += 1;
+                                let sum = profile.advancements.sum(profile.xp);
+                                if let Some(advancement) = profile.increment_xp() {
+                                    dms.push((tile.steader.clone(), [
+                                        json!({
+                                            "type": "section",
+                                            "text": mrkdwn(format!(
+                                                concat!(
+                                                    ":tada: Your Hackstead is now a *{}*!\n\n",
+                                                    "*{}* Achieved:\n_{}_\n\n",
+                                                    ":stonks: Total XP: *{}xp*\n",
+                                                    ":mountain: Land Available: *{} pieces* _(+{} pieces)_"
+                                                ),
+                                                advancement.achiever_title,
+                                                advancement.title,
+                                                advancement.description,
+                                                advancement.xp,
+                                                sum.land,
+                                                match advancement.kind {
+                                                    config::HacksteadAdvancementKind::Land { pieces } => pieces,
+                                                }
+                                            )),
+                                            "accessory": {
+                                                "type": "image",
+                                                "image_url": format!("http://{}/gotchi/img/gotchi/hackpheus.png", *URL),
+                                                "alt_text": "happy shiny better hackstead",
+                                            }
+                                        }),
+                                        comment("SUPER EXCITING LEVELING UP NOISES"),
+                                    ]));
+                                }
+                                if let Some(advancement) = plant.increment_xp() {
+                                    dms.push((tile.steader.clone(), [
+                                        json!({
+                                            "type": "section",
+                                            "text": mrkdwn(format!(
+                                                concat!(
+                                                    ":tada: Your {} is now a *{}*!\n\n",
+                                                    "*{}* Achieved:\n _{}_\n\n",
+                                                    ":stonks: Total XP: *{}xp*",
+                                                ),
+                                                plant.name,
+                                                advancement.achiever_title,
+                                                advancement.title,
+                                                advancement.description,
+                                                advancement.xp
+                                            )),
+                                            "accessory": {
+                                                "type": "image",
+                                                "image_url": format!("http://{}/gotchi/img/plant/{}.png", *URL, filify(&plant.name)),
+                                                "alt_text": "happy shiny better plant",
+                                            }
+                                        }),
+                                        comment("EXCITING LEVELING UP NOISES"),
+                                    ]))
+                                }
                             }
                             None => {
-                                println!("couldn't get tile[{}]'s steader[{}]'s profile", tile.id, tile.steader);
+                                println!(
+                                    "couldn't get tile[{}]'s steader[{}]'s profile",
+                                    tile.id, tile.steader
+                                );
                             }
                         }
                     }
                 }
 
-                let _ = db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                    request_items: [(
-                        hacksteader::TABLE_NAME.to_string(),
-                        tiles
-                            .into_iter()
-                            .map(|(plant, mut tile)| rusoto_dynamodb::WriteRequest {
-                                put_request: Some(rusoto_dynamodb::PutRequest {
-                                    item: {
-                                        tile.plant = Some(plant);
+                let _ = futures::try_join!(
+                    stream::iter(profiles.clone())
+                        .map(|x| Ok(x))
+                        .try_for_each_concurrent(None, |(who, _)| { update_user_home_tab(who) }),
+                    stream::iter(dms)
+                        .map(|x| Ok(x))
+                        .try_for_each_concurrent(None, |(who, blocks)| {
+                            dm_blocks(who.clone(), blocks.to_vec())
+                        }),
+                    db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
+                        request_items: [(
+                            hacksteader::TABLE_NAME.to_string(),
+                            tiles
+                                .into_iter()
+                                .map(|(plant, mut tile)| rusoto_dynamodb::WriteRequest {
+                                    put_request: Some(rusoto_dynamodb::PutRequest {
+                                        item: {
+                                            tile.plant = Some(plant);
 
-                                        tile
-                                            .into_av()
-                                            .m
-                                            .expect("tile attribute should be map")
+                                            tile.into_av().m.expect("tile attribute should be map")
+                                        }
+                                    }),
+                                    ..Default::default()
+                                })
+                                .chain(profiles.iter().map(|(_, p)| {
+                                    rusoto_dynamodb::WriteRequest {
+                                        put_request: Some(rusoto_dynamodb::PutRequest {
+                                            item: p.item(),
+                                        }),
+                                        ..Default::default()
                                     }
-                                }),
-                                ..Default::default()
-                            })
-                            .chain(profiles.iter().map(|(_, p)| rusoto_dynamodb::WriteRequest {
-                                put_request: Some(rusoto_dynamodb::PutRequest {
-                                    item: p.item(),
-                                }),
-                                ..Default::default()
-                            }))
-                            .collect(),
-                    )]
-                    .iter()
-                    .cloned()
-                    .collect(),
-                    ..Default::default()
-                })
-                .await
-                .map_err(|e| println!("couldn't write new land into db: {}", e));
+                                }))
+                                .collect(),
+                        )]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                        ..Default::default()
+                    })
+                    .map_err(|e| format!("couldn't write new land into db: {}", e))
+                )
+                .map_err(|e| println!("farm cycle async err: {}", e));
 
                 if elapsed > 0 {
                     last_farm += Duration::from_millis(
@@ -1689,8 +1899,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         );
                     });
                 }
-
-                interval.tick().await;
             }
         }
     });
@@ -1698,9 +1906,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     dotenv::dotenv().ok();
 
     rocket::ignite()
+        .manage(tx)
         .mount(
             "/gotchi",
-            routes![hackstead, hackmarket, action_endpoint, challenge, event],
+            routes![
+                hackstead,
+                hackmarket,
+                action_endpoint,
+                challenge,
+                event,
+                steadercount
+            ],
         )
         .mount(
             "/gotchi/img",
