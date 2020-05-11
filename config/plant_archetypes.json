@@ -1,6 +1,7 @@
 [
     {
         "name": "Bractus",
+        "base_yield_duration": 900,
         "advancements": {
             "base": {
                 "xp": 0,
@@ -8,88 +9,209 @@
                 "description": "Right now this Bractus can only produce XP, but he's eager to do more!",
                 "achiever_title": "Bractus Seedling",
                 "kind": {
-                    "Xp": {
-                        "multiplier": 1
-                    }
+                    "Xp": 1.0
                 }
             },
             "rest": [
                 {
-                    "xp": 20,
+                    "xp": 120,
                     "title": "Doughy Drought",
-                    "description": "This Bractus will provide one Bread Essence every hour",
+                    "description": "In the pounding desert heat, this young Bractus only has the strength to provide one Bread Essence every hour.",
                     "achiever_title": "Dry Loaf",
                     "kind": {
-                        "Yield": {
-                            "resources": [
-                                [1.2, "Bread Essence"]
+                        "Yield": [
+                            [
+                                [
+                                    1.0,
+                                    1.2
+                                ],
+                                "Bread Essence"
                             ]
-                        }
+                        ]
                     }
                 },
                 {
-                    "xp": 50,
-                    "title": "Journey to the Yeast",
-                    "description": "The Bread Heavens part and bestow 25% faster production on your Bractus",
-                    "achiever_title": "Old Pan of the Desert",
+                    "xp": 320,
+                    "title": "Bread Buddies",
+                    "description": "This adorable Bractus's unbridled hopes and aspirations make neighboring Bracti have confidence in the future, allowing them to produce twice as bountiful yields.",
+                    "achiever_title": "Budding Bractus",
                     "kind": {
-                        "YieldSpeed": {
-                            "multiplier": 1.25
-                        }
+                        "NeighborYieldSize": 2.0
                     }
                 },
                 {
-                    "xp": 90,
-                    "title": "On the Third Day",
-                    "description": "Your Bractus has ascended in ability. It is now able to yield rare resources.",
+                    "xp": 600,
+                    "title": "Journey to the Yeast",
+                    "description": "The Bread Heavens part and a crisp golden light shines on this Bractus, blessing it with 25% faster resource production.",
+                    "achiever_title": "Half-Baked Bractus",
+                    "kind": {
+                        "YieldSpeed": 1.25
+                    }
+                },
+                {
+                    "xp": 960,
+                    "title": "Rockin' and Rollin'",
+                    "description": "Tall and proud with the horizon extended ahead, this Bractus now produces resources at a 25% higher rate.",
+                    "achiever_title": "Lone Star Sourguarodough",
+                    "kind": {
+                        "YieldSpeed": 1.25
+                    }
+                },
+                {
+                    "xp": 2000,
+                    "title": "On the Rise",
+                    "description": "Your Bractus has grown a bit. It is now able to give you a Bread Egg 0.02% of the time. Boosts to the size of your Bractus's yields will increase this chance.",
                     "achiever_title": "Rose Bractus",
                     "kind": {
-                        "Yield": {
-                            "resources": [
-                                [0.0002, "Bread Egg"]
+                        "Yield": [
+                            [
+                                [
+                                    0.00019,
+                                    0.0002
+                                ],
+                                "Bread Egg"
                             ]
-                        }
+                        ]
                     }
                 },
                 {
-                    "xp": 150,
-                    "title": "Bittersweet Voyage",
-                    "description": "This Bractus imparts its wisdom unto neighboring Bracti, allowing them 20% more bountiful yields",
-                    "achiever_title": "Sourguarodough",
+                    "xp": 2560,
+                    "title": "Agglutination",
+                    "description": "It seems like some powerful compounds are clumpting together in your Bractus's photoreceptor units, as well as its kneading organs! It can now produce 25% larger yields!",
+                    "achiever_title": "Not Gluten-Free Bractus",
                     "kind": {
-                        "YieldNeighboringSize": {
-                            "multiplier": 1.2
-                        }
+                        "YieldSize": 1.25
                     }
                 },
                 {
-                    "xp": 240,
-                    "title": "And Then The Rain Fell",
-                    "description": "This Bractus has lived long and now can spread its kin among the vast reaches of the desert.",
-                    "achiever_title": "Soggyarodough",
+                    "xp": 3200,
+                    "title": "Dessert",
+                    "description": "Desert, dessert, desert, deserted by your friends in this horrible desert with no dessert ... but what's the difference when the sun has baked your brain to a nice crispy golden brown? Your Bractus can now produce 25% larger yields!",
+                    "achiever_title": "Pastry Bractus",
                     "kind": {
-                        "Craft": {
-                            "recipes": [
-                                {
-                                    "needs": [
-                                        [50, "Hacker Spirit"],
-                                        [50, "Crystallis"]
+                        "YieldSize": 1.25
+                    }
+                },
+                {
+                    "xp": 5000,
+                    "title": "Birds and the Bread",
+                    "description": "This Bractus has lived long and now can spread life across the vast reaches of the desert.",
+                    "achiever_title": "Flouring Sourguarodough",
+                    "kind": {
+                        "Craft": [
+                            {
+                                "needs": [
+                                    [
+                                        20,
+                                        "Hacker Spirit"
                                     ],
-                                    "makes": "Bread Egg"
-                                }
-                            ]
-                        }
+                                    [
+                                        20,
+                                        "Cyl Crystal"
+                                    ]
+                                ],
+                                "makes": "Bread Egg"
+                            }
+                        ]
                     }
                 },
                 {
-                    "xp": 400,
-                    "title": "Rockin' and Rollin'",
-                    "description": "Tall and proud with the horizon extended ahead, this Bractus gives you produces resources at a 50% faster rate.",
-                    "achiever_title": "Lone Star Bractus",
+                    "xp": 6000,
+                    "title": "Biscuits 'n Gravy",
+                    "description": "Your Bractus has decided to start preparing Biscuits 'n Gravy for all of the other Bracti nearby.",
+                    "achiever_title": "Breaktus",
                     "kind": {
-                        "YieldSpeed": {
-                            "multiplier": 1.5
-                        }
+                        "NeighborYieldSpeed": 1.5
+                    }
+                },
+                {
+                    "xp": 7200,
+                    "title": "Gravy 'n Biscuits",
+                    "description": "Your Bractus has decided to start sharing its illustrious Biscuits 'n Gravy recipe with all the other Bracti nearby, allowing them to produce yields 50% faster.",
+                    "achiever_title": "Breakfastus",
+                    "kind": {
+                        "NeighborYieldSpeed": 1.5
+                    }
+                },
+                {
+                    "xp": 9000,
+                    "title": "Son of a Biscuit Eater",
+                    "description": "Your Bractus has developed spikes which are well over a meter long. These deter carnivorous desert unicorns, allowing your now-unhindered Bractus to produce yields at a 15% faster rate.",
+                    "achiever_title": "Hardtacktus",
+                    "kind": {
+                        "YieldSpeed": 1.15
+                    }
+                },
+                {
+                    "xp": 12800,
+                    "title": "Butter My Biscuits",
+                    "description": "Your Bractus has developed the ability to draw in its spikes and has now begun to secrete a delicious buttery substance which attracts nearby carnivorous unicorns. Once the unicorns begin licking the buttery substance off of the Bractus's skin, your Bractus releases its spikes again, piercing the pale, white, bioluminescent flesh of the unicorns and draining their vital organs. This newfound source of nutrients allows your Bractus to produce yields 3 times more often!",
+                    "achiever_title": "Buttertus",
+                    "kind": {
+                        "YieldSpeed": 3.0
+                    }
+                },
+                {
+                    "xp": 15200,
+                    "title": "Artificial Inflation",
+                    "description": "You know how when you open a bag of chips only to find that it's already half empty? Your Bractus figured out how to accomplish something similar by putting more air bubbles in its bread! Expect yields 25% more often!",
+                    "achiever_title": "Bubbly Bractus",
+                    "kind": {
+                        "YieldSize": 1.25
+                    }
+                },
+                {
+                    "xp": 18000,
+                    "title": "Bread Growers' Association",
+                    "description": "Your Bractus forms an official unofficial regulatory body with the other bractuses nearby, allowing them to produce 50% larger yields!",
+                    "achiever_title": "Connected Bractus",
+                    "kind": {
+                        "NeighborYieldSize": 1.5
+                    }
+                },
+                {
+                    "xp": 21600,
+                    "title": "Bread Growers' Guild",
+                    "description": "Your Bractus's Bread Growers' Association is now complete with hazing, violent riots, freemason connections and 50% larger yields for all neighboring Bracti!",
+                    "achiever_title": "Deepstate Bractus",
+                    "kind": {
+                        "NeighborYieldSize": 1.5
+                    }
+                },
+                {
+                    "xp": 28000,
+                    "title": "Breadbox",
+                    "description": "Is your Bractus bigger than a breadbox? Why, now it most certainly is, so you can expect 25% greater yields!",
+                    "achiever_title": "Out of the Box Bractus",
+                    "kind": {
+                        "YieldSize": 1.25
+                    }
+                },
+                {
+                    "xp": 40000,
+                    "title": "Bread of Kings",
+                    "description": "Your Bractus has a new crafting recipe you can use to turn a Rolling Pin into a Kingpin!",
+                    "achiever_title": "Bactus Kingmaker",
+                    "kind": {
+                        "Craft": [
+                            {
+                                "needs": [
+                                    [
+                                        200,
+                                        "Hacker Spirit"
+                                    ],
+                                    [
+                                        200,
+                                        "Cyl Crystal"
+                                    ],
+                                    [
+                                        1,
+                                        "Rolling Pin"
+                                    ]
+                                ],
+                                "makes": "Kingpin"
+                            }
+                        ]
                     }
                 }
             ]

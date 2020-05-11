@@ -1,4 +1,4 @@
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -89,12 +89,14 @@ pub enum HacksteadAdvancementKind {
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct HacksteadAdvancementSum {
     pub land: u32,
+    pub xp: u64,
 }
 impl AdvancementSum for HacksteadAdvancementSum {
     type Kind = HacksteadAdvancementKind;
 
-    fn new(unlocked: &[Advancement<Self>]) -> Self {
+    fn new(unlocked: &[&Advancement<Self>]) -> Self {
         Self {
+            xp: unlocked.iter().fold(0, |a, c| a + c.xp),
             land: unlocked
                 .iter()
                 .map(|k| match k.kind {
@@ -114,12 +116,15 @@ pub struct SeedArchetype {
     pub grows_into: String,
 }
 #[derive(Deserialize, Debug, Clone)]
-pub enum ApplicationEffects {
-    TimeIncrease { farming_cycles: usize },
+pub enum ApplicationEffect {
+    TimeIncrease {
+        extra_cycles: u64,
+        duration_cycles: u64,
+    },
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct KeepsakeArchetype {
-    pub plant_applicable: Option<(String, ApplicationEffects)>,
+    pub application_effect: Option<ApplicationEffect>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -128,73 +133,126 @@ pub enum ArchetypeKind {
     Seed(SeedArchetype),
     Keepsake(KeepsakeArchetype),
 }
+impl ArchetypeKind {
+    pub fn keepsake(&self) -> Option<&KeepsakeArchetype> {
+        match self {
+            ArchetypeKind::Keepsake(k) => Some(k),
+            _ => None,
+        }
+    }
+}
 #[derive(Deserialize, Debug, Clone)]
 pub struct Archetype {
     pub name: String,
+    pub description: String,
     pub kind: ArchetypeKind,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct PlantArchetype {
     pub name: String,
+    pub base_yield_duration: f32,
     pub advancements: AdvancementSet<PlantAdvancementSum>,
 }
 pub type PlantAdvancement = Advancement<PlantAdvancementSum>;
 /// Recipe is generic over the way Archetypes are referred to
 /// to make it easy to use Strings in the configs and ArchetypeHandles
 /// at runtime
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Recipe<Handle> {
-    needs: Vec<(usize, Handle)>,
-    makes: Handle,
+    pub needs: Vec<(usize, Handle)>,
+    pub makes: Handle,
 }
+impl Recipe<ArchetypeHandle> {
+    pub fn satisfies(&self, inv: &[super::hacksteader::Possession]) -> bool {
+        self.needs.iter().copied().all(|(count, ah)| {
+            let has = inv.iter().filter(|x| x.archetype_handle == ah).count();
+            count <= has
+        })
+    }
+    pub fn lookup_handles(self) -> Option<Recipe<&'static Archetype>> {
+        let makes = CONFIG.possession_archetypes.get(self.makes)?;
+        let needs = self
+            .needs
+            .into_iter()
+            .map(|(n, x)| Some((n, CONFIG.possession_archetypes.get(x)?)))
+            .collect::<Option<Vec<(_, &Archetype)>>>()?;
+
+        Some(Recipe { makes, needs })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct SpawnRate(pub f32, pub (f32, f32));
+impl SpawnRate {
+    pub fn gen_count<R: rand::Rng>(self, rng: &mut R) -> usize {
+        let Self(guard, (lo, hi)) = self;
+        if rng.gen_range(0.0, 1.0) < guard {
+            let chance = rng.gen_range(lo, hi);
+            let base = chance.floor();
+            let extra = if rng.gen_range(0.0, 1.0) < chance - base {
+                1
+            } else {
+                0
+            };
+            base as usize + extra
+        } else {
+            0
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub enum PlantAdvancementKind {
-    Xp { multiplier: f32 },
-    YieldSpeed { multiplier: f32 },
-    YieldNeighboringSize { multiplier: f32 },
-    Yield { resources: Vec<(f32, String)> },
-    Craft { recipes: Vec<Recipe<String>> },
+    Xp(f32),
+    YieldSpeed(f32),
+    YieldSize(f32),
+    NeighborYieldSize(f32),
+    NeighborYieldSpeed(f32),
+    Yield(Vec<(SpawnRate, String)>),
+    Craft(Vec<Recipe<String>>),
 }
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(bound(deserialize = ""))]
 pub struct PlantAdvancementSum {
-    xp_multiplier: f32,
-    yield_speed_multiplier: f32,
-    yields: Vec<(f32, ArchetypeHandle)>,
-    recipes: Vec<Recipe<ArchetypeHandle>>,
+    pub xp: u64,
+    pub xp_multiplier: f32,
+    pub yield_speed_multiplier: f32,
+    pub yield_size_multiplier: f32,
+    pub yields: Vec<(SpawnRate, ArchetypeHandle)>,
+    pub recipes: Vec<Recipe<ArchetypeHandle>>,
 }
 impl AdvancementSum for PlantAdvancementSum {
     type Kind = PlantAdvancementKind;
 
-    fn new(unlocked: &[Advancement<Self>]) -> Self {
+    fn new(unlocked: &[&Advancement<Self>]) -> Self {
         use PlantAdvancementKind::*;
 
-        let mut sum = PlantAdvancementSum {
-            xp_multiplier: 1.0,
-            yield_speed_multiplier: 1.0,
-            yields: vec![],
-            recipes: vec![],
-        };
+        let mut xp = 0;
+        let mut xp_multiplier = 1.0;
+        let mut yield_speed_multiplier = 1.0;
+        let mut yield_size_multiplier = 1.0;
+        let mut yields = vec![];
+        let mut recipes = vec![];
 
         for k in unlocked.iter() {
+            xp += k.xp;
             match &k.kind {
-                Xp { multiplier } => {
-                    sum.xp_multiplier *= multiplier;
-                }
-                YieldSpeed { multiplier } => {
-                    sum.yield_speed_multiplier *= multiplier;
-                }
-                YieldNeighboringSize { .. } => {}
-                Yield { resources } => sum.yields.append(
+                Xp(multiplier) => xp_multiplier *= multiplier,
+                YieldSpeed(multiplier) => yield_speed_multiplier *= multiplier,
+                NeighborYieldSpeed(..) => {}
+                YieldSize(multiplier) => yield_size_multiplier *= multiplier,
+                NeighborYieldSize(..) => {}
+                Yield(resources) => yields.append(
                     &mut resources
                         .iter()
                         .map(|(c, s)| Ok((*c, CONFIG.find_possession_handle(s)?)))
                         .collect::<Result<Vec<_>, ConfigError>>()
                         .expect("couldn't find archetype for advancement yield"),
                 ),
-                Craft { recipes } => sum.recipes.append(
-                    &mut recipes
+                Craft(new_recipes) => recipes.append(
+                    &mut new_recipes
                         .iter()
                         .map(|r| {
                             Ok(Recipe {
@@ -212,14 +270,34 @@ impl AdvancementSum for PlantAdvancementSum {
             }
         }
 
-        sum
+        yields = yields
+            .into_iter()
+            .map(|(SpawnRate(guard, (lo, hi)), name)| {
+                (
+                    SpawnRate(
+                        (guard * yield_size_multiplier).max(1.0),
+                        (lo * yield_size_multiplier, hi * yield_size_multiplier)
+                    ),
+                    name,
+                )
+            })
+            .collect();
+
+        Self {
+            xp,
+            xp_multiplier,
+            yield_speed_multiplier,
+            yield_size_multiplier,
+            yields,
+            recipes,
+        }
     }
 }
 
 pub trait AdvancementSum: DeserializeOwned + PartialEq + fmt::Debug {
     type Kind: DeserializeOwned + fmt::Debug + Clone + PartialEq;
 
-    fn new(unlocked: &[Advancement<Self>]) -> Self;
+    fn new(unlocked: &[&Advancement<Self>]) -> Self;
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -239,9 +317,19 @@ pub struct AdvancementSet<S: AdvancementSum> {
 }
 #[allow(dead_code)]
 impl<S: AdvancementSum> AdvancementSet<S> {
-    pub fn all(mut self) -> Vec<Advancement<S>> {
-        self.rest.insert(0, self.base);
-        self.rest
+    pub fn all(&self) -> impl Iterator<Item = &Advancement<S>> {
+        std::iter::once(&self.base).chain(self.rest.iter())
+    }
+    pub fn unlocked(&self, xp: u64) -> impl Iterator<Item = &Advancement<S>> {
+        std::iter::once(&self.base).chain(self.rest.iter().take(self.current_position(xp)))
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Advancement<S>> {
+        if index == 0 {
+            Some(&self.base)
+        } else {
+            self.rest.get(index - 1)
+        }
     }
 
     pub fn increment_xp(&self, xp: &mut u64) -> Option<&Advancement<S>> {
@@ -251,27 +339,47 @@ impl<S: AdvancementSum> AdvancementSet<S> {
     }
 
     pub fn sum(&self, xp: u64) -> S {
-        S::new(&self.rest[0..self.current_position(xp).unwrap_or(0)])
+        S::new(&self.unlocked(xp).collect::<Vec<_>>())
     }
 
     pub fn max(&self) -> S {
-        S::new(&self.rest)
+        S::new(&self.all().collect::<Vec<_>>())
     }
 
     pub fn current(&self, xp: u64) -> &Advancement<S> {
-        self.current_position(xp)
-            .and_then(|x| self.rest.get(x))
-            .unwrap_or(&self.base)
+        self.get(self.current_position(xp)).unwrap_or(&self.base)
     }
 
     pub fn next(&self, xp: u64) -> Option<&Advancement<S>> {
-        self.rest.get(self.current_position(xp).unwrap_or(0) + 1)
+        self.get(self.current_position(xp) + 1)
     }
 
-    pub fn current_position(&self, xp: u64) -> Option<usize> {
-        match self.rest.iter().position(|x| x.xp > xp) {
-            Some(x) => x.checked_sub(1),
-            None => Some(self.rest.len() - 1),
+    pub fn current_position(&self, xp: u64) -> usize {
+        let mut state = 0;
+        self.all()
+            .position(|x| {
+                state += x.xp;
+                state > xp
+            })
+            .unwrap_or(self.rest.len() + 1)
+            .checked_sub(1)
+            .unwrap_or(0)
+    }
+}
+
+#[test]
+fn upgrade_increase() {
+    for arch in CONFIG.plant_archetypes.iter() {
+        let adv = &arch.advancements;
+        let last = adv.rest.last().unwrap();
+        for xp in 0..last.xp {
+            assert!(
+                adv.current(xp).xp <= xp,
+                "when xp is {} for {} the current advancement has more xp({})",
+                xp,
+                arch.name,
+                adv.current(xp).xp
+            );
         }
     }
 }
@@ -294,11 +402,11 @@ fn archetype_name_matches() {
     }
 
     for arch in CONFIG.plant_archetypes.iter().cloned() {
-        for adv in arch.advancements.all().iter() {
+        for adv in arch.advancements.all() {
             use PlantAdvancementKind::*;
 
             match &adv.kind {
-                Yield { resources } => {
+                Yield(resources) => {
                     for (_, item_name) in resources.iter() {
                         assert!(
                             CONFIG.find_possession(item_name).is_ok(),
@@ -309,7 +417,7 @@ fn archetype_name_matches() {
                         )
                     }
                 }
-                Craft { recipes } => {
+                Craft(recipes) => {
                     for Recipe { makes, needs } in recipes.iter() {
                         assert!(
                             CONFIG.find_possession(makes).is_ok(),

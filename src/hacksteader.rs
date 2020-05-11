@@ -102,6 +102,7 @@ pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttributeParseError {
     IntFieldParse(&'static str, std::num::ParseIntError),
+    FloatFieldParse(&'static str, std::num::ParseFloatError),
     TimeFieldParse(&'static str, humantime::TimestampError),
     IdFieldParse(&'static str, uuid::Error),
     CategoryParse(CategoryError),
@@ -133,6 +134,7 @@ impl fmt::Display for AttributeParseError {
         use AttributeParseError::*;
         match self {
             IntFieldParse(field, e) => write!(f, "error parsing integer field {:?}: {}", field, e),
+            FloatFieldParse(field, e) => write!(f, "error parsing float field {:?}: {}", field, e),
             TimeFieldParse(field, e) => {
                 write!(f, "error parsing timestamp field {:?}: {}", field, e)
             }
@@ -147,9 +149,40 @@ impl fmt::Display for AttributeParseError {
     }
 }
 
+pub async fn profill(db: &DynamoDbClient) -> Result<(), String> {
+    let profiles = Profile::fetch_all(db).await?;
+
+    db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
+        request_items: [(
+            TABLE_NAME.to_string(),
+            profiles
+                .into_iter()
+                .map(|mut p| rusoto_dynamodb::WriteRequest {
+                    put_request: Some(rusoto_dynamodb::PutRequest {
+                        item: {
+                            p.last_farm = std::time::SystemTime::now();
+                            p.xp = 0;
+                            p.item()
+                        },
+                    }),
+                    ..Default::default()
+                })
+                .collect(),
+        )]
+        .iter()
+        .cloned()
+        .collect(),
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("couldn't write wiped profiles into db: {}", e))?;
+
+    Ok(())
+}
+
 pub async fn landfill(
     db: &DynamoDbClient,
-    active_users: &crossbeam_channel::Sender<String>,
+    to_farming: &crossbeam_channel::Sender<super::FarmingInputEvent>,
 ) -> Result<(), String> {
     let tiles = Tile::fetch_all(db).await?;
 
@@ -161,7 +194,9 @@ pub async fn landfill(
                 .map(|mut tile| rusoto_dynamodb::WriteRequest {
                     put_request: Some(rusoto_dynamodb::PutRequest {
                         item: {
-                            active_users.send(tile.steader.clone()).unwrap();
+                            to_farming
+                                .send(super::FarmingInputEvent::ActivateUser(tile.steader.clone()))
+                                .unwrap();
                             tile.plant.take();
 
                             tile.into_av().m.expect("tile attribute should be map")
@@ -227,31 +262,6 @@ impl Tile {
                 }
             })
             .collect())
-    }
-
-    pub async fn plant(
-        db: &DynamoDbClient,
-        tile_id: uuid::Uuid,
-        seed_ah: ArchetypeHandle,
-    ) -> Result<(), String> {
-        match db
-            .update_item(rusoto_dynamodb::UpdateItemInput {
-                table_name: TABLE_NAME.to_string(),
-                key: Key::tile(tile_id).into_item(),
-                update_expression: Some("SET plant = :baby_plant".to_string()),
-                expression_attribute_values: Some(
-                    [(":baby_plant".to_string(), Plant::new(seed_ah).into_av())]
-                        .iter()
-                        .cloned()
-                        .collect(),
-                ),
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(e) => Err(format!("couldn't plant on tile in db: {}", e)),
-        }
     }
 
     pub fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
@@ -321,6 +331,7 @@ impl Tile {
 #[derive(Debug, Clone)]
 pub struct Plant {
     pub xp: u64,
+    pub until_yield: f32,
     pub archetype_handle: ArchetypeHandle,
 }
 
@@ -337,10 +348,13 @@ impl std::ops::Deref for Plant {
 
 impl Plant {
     pub fn new(ah: ArchetypeHandle) -> Self {
-        Self {
+        let mut s = Self {
             xp: 0,
+            until_yield: 0.0,
             archetype_handle: ah,
-        }
+        };
+        s.until_yield = s.base_yield_duration;
+        s
     }
 
     pub fn current_advancement(&self) -> &config::PlantAdvancement {
@@ -374,6 +388,14 @@ impl Plant {
                 .ok_or(WronglyTypedField("xp"))?
                 .parse()
                 .map_err(|e| IntFieldParse("xp", e))?,
+            until_yield: m
+                .get("until_yield")
+                .ok_or(MissingField("until_yield"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("until_yield"))?
+                .parse()
+                .map_err(|e| FloatFieldParse("until_yield", e))?,
             archetype_handle: m
                 .get("archetype_handle")
                 .ok_or(MissingField("archetype_handle"))?
@@ -397,6 +419,13 @@ impl Plant {
                         },
                     ),
                     (
+                        "until_yield".to_string(),
+                        AttributeValue {
+                            n: Some(self.until_yield.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
                         "archetype_handle".to_string(),
                         AttributeValue {
                             n: Some(self.archetype_handle.to_string()),
@@ -415,9 +444,10 @@ impl Plant {
 
 /// A model for all keys that use uuid:Uuids internally,
 /// essentially all those except Profile keys.
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct Key {
-    category: Category,
-    id: uuid::Uuid,
+    pub category: Category,
+    pub id: uuid::Uuid,
 }
 impl Key {
     #[allow(dead_code)]
@@ -470,6 +500,23 @@ impl Key {
             )
             .map_err(|e| IdFieldParse("id", e))?,
         })
+    }
+
+    pub async fn fetch_db(self, db: &DynamoDbClient) -> Result<Possession, String> {
+        match db
+            .get_item(rusoto_dynamodb::GetItemInput {
+                key: self.clone().into_item(),
+                table_name: TABLE_NAME.to_string(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(o) => {
+                Possession::from_item(&o.item.ok_or_else(|| format!("key[{:?}] not in db", self))?)
+                    .map_err(|e| format!("couldn't parse item: {}", e))
+            }
+            Err(e) => Err(format!("Couldn't read key[{:?}] from db: {}", self, e)),
+        }
     }
 }
 
@@ -1148,6 +1195,12 @@ pub struct Owner {
     pub acquisition: Acquisition,
 }
 impl Owner {
+    pub fn farmer(id: String) -> Self {
+        Self {
+            id,
+            acquisition: Acquisition::Farmed,
+        }
+    }
     fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
         use AttributeParseError::*;
 
@@ -1212,6 +1265,7 @@ fn owner_serialize() {
 pub enum Acquisition {
     Trade,
     Purchase { price: u64 },
+    Farmed,
 }
 impl Acquisition {
     fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
@@ -1226,6 +1280,7 @@ impl Acquisition {
             .clone();
         match kind.as_str() {
             "Trade" => Ok(Acquisition::Trade),
+            "Farmed" => Ok(Acquisition::Farmed),
             "Purchase" => Ok(Acquisition::Purchase {
                 price: item
                     .get("price")
@@ -1247,6 +1302,7 @@ impl fmt::Display for Acquisition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Acquisition::Trade => write!(f, "Trade"),
+            Acquisition::Farmed => write!(f, "Farmed"),
             Acquisition::Purchase { price } => write!(f, "Purchase({}gp)", price),
         }
     }
@@ -1255,11 +1311,11 @@ impl Into<AttributeValue> for Acquisition {
     fn into(self) -> AttributeValue {
         AttributeValue {
             m: match self {
-                Acquisition::Trade => Some(
+                Acquisition::Trade | Acquisition::Farmed => Some(
                     [(
                         "type".to_string(),
                         AttributeValue {
-                            s: Some("Trade".to_string()),
+                            s: Some(format!("{}", self)),
                             ..Default::default()
                         },
                     )]
@@ -1436,7 +1492,7 @@ impl Possession {
         }
     }
 
-    fn item(&self) -> Item {
+    pub fn item(&self) -> Item {
         let mut m = self.key().into_item();
         m.insert(
             "steader".to_string(),
@@ -1576,12 +1632,17 @@ impl Profile {
         }
     }
 
+    // TODO: store xp in advancements so methods like these aren't necessary
     pub fn current_advancement(&self) -> &config::HacksteadAdvancement {
         self.advancements.current(self.xp)
     }
 
     pub fn next_advancement(&self) -> Option<&config::HacksteadAdvancement> {
         self.advancements.next(self.xp)
+    }
+
+    pub fn advancements_sum(&self) -> config::HacksteadAdvancementSum {
+        self.advancements.sum(self.xp)
     }
 
     pub fn increment_xp(&mut self) -> Option<&config::HacksteadAdvancement> {
