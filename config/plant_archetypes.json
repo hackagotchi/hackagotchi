@@ -5,9 +5,10 @@
         "advancements": {
             "base": {
                 "xp": 0,
-                "title": "Bractus Beginnings",
+                "title": "Baked Like a Bractus",
                 "description": "Right now this Bractus can only produce XP, but he's eager to do more!",
                 "achiever_title": "Bractus Seedling",
+                "art": "bractus_loaf",
                 "kind": {
                     "Xp": 1.0
                 }
@@ -18,12 +19,16 @@
                     "title": "Doughy Drought",
                     "description": "In the pounding desert heat, this young Bractus only has the strength to provide one Bread Essence every hour.",
                     "achiever_title": "Dry Loaf",
+                    "art": "bractus_loaf",
                     "kind": {
                         "Yield": [
                             [
                                 [
                                     1.0,
-                                    1.2
+                                    [
+                                        1.4,
+                                        1.6
+                                    ]
                                 ],
                                 "Bread Essence"
                             ]
@@ -33,43 +38,50 @@
                 {
                     "xp": 320,
                     "title": "Bread Buddies",
-                    "description": "This adorable Bractus's unbridled hopes and aspirations make neighboring Bracti have confidence in the future, allowing them to produce twice as bountiful yields.",
+                    "description": "This adorable Bractus's unbridled hopes and aspirations make neighboring Bracti have confidence in the future, allowing them to produce 35% as bountiful yields.",
                     "achiever_title": "Budding Bractus",
+                    "art": "bractus_loaf",
                     "kind": {
-                        "NeighborYieldSize": 2.0
+                        "NeighborYieldSize": 1.35
                     }
                 },
                 {
                     "xp": 600,
                     "title": "Journey to the Yeast",
-                    "description": "The Bread Heavens part and a crisp golden light shines on this Bractus, blessing it with 25% faster resource production.",
+                    "description": "The Bread Heavens part and a crisp golden light shines on this Bractus, blessing it with 15% faster resource production.",
                     "achiever_title": "Half-Baked Bractus",
+                    "art": "bractus_loaf",
                     "kind": {
-                        "YieldSpeed": 1.25
+                        "YieldSpeed": 1.15
                     }
                 },
                 {
                     "xp": 960,
                     "title": "Rockin' and Rollin'",
-                    "description": "Tall and proud with the horizon extended ahead, this Bractus now produces resources at a 25% higher rate.",
+                    "description": "Tall and proud with the horizon extended ahead, this Bractus now produces resources at a 15% higher rate.",
                     "achiever_title": "Lone Star Sourguarodough",
+                    "art": "bractus_loaf",
                     "kind": {
-                        "YieldSpeed": 1.25
+                        "YieldSpeed": 1.15
                     }
                 },
                 {
                     "xp": 2000,
                     "title": "On the Rise",
-                    "description": "Your Bractus has grown a bit. It is now able to give you a Bread Egg 0.02% of the time. Boosts to the size of your Bractus's yields will increase this chance.",
+                    "description": "Your Bractus has grown quite high above the ground, and is now able to give you a Bractus Seed 7.5% of the time. Boosts to the size of your Bractus's yields will increase this chance (as well as the number of seeds you receive).",
                     "achiever_title": "Rose Bractus",
+                    "art": "bractus_kid",
                     "kind": {
                         "Yield": [
                             [
                                 [
-                                    0.00019,
-                                    0.0002
+                                    0.075,
+                                    [
+                                        1.5,
+                                        2.3
+                                    ]
                                 ],
-                                "Bread Egg"
+                                "Bractus Seed"
                             ]
                         ]
                     }
@@ -77,19 +89,21 @@
                 {
                     "xp": 2560,
                     "title": "Agglutination",
-                    "description": "It seems like some powerful compounds are clumpting together in your Bractus's photoreceptor units, as well as its kneading organs! It can now produce 25% larger yields!",
+                    "description": "It seems like some powerful compounds are clumpting together in your Bractus's photoreceptor units, as well as its kneading organs! It can now produce 15% larger yields!",
                     "achiever_title": "Not Gluten-Free Bractus",
+                    "art": "bractus_kid",
                     "kind": {
-                        "YieldSize": 1.25
+                        "YieldSize": 1.15
                     }
                 },
                 {
                     "xp": 3200,
-                    "title": "Dessert",
-                    "description": "Desert, dessert, desert, deserted by your friends in this horrible desert with no dessert ... but what's the difference when the sun has baked your brain to a nice crispy golden brown? Your Bractus can now produce 25% larger yields!",
+                    "title": "Just Desserts",
+                    "description": "Desert, dessert, desert, deserted by your friends in this horrible desert with no dessert ... but what's the difference when the sun has baked your brain to a nice crispy golden brown? Your Bractus can now produce 15% larger yields!",
                     "achiever_title": "Pastry Bractus",
+                    "art": "bractus_kid",
                     "kind": {
-                        "YieldSize": 1.25
+                        "YieldSize": 1.15
                     }
                 },
                 {
@@ -97,6 +111,7 @@
                     "title": "Birds and the Bread",
                     "description": "This Bractus has lived long and now can spread life across the vast reaches of the desert.",
                     "achiever_title": "Flouring Sourguarodough",
+                    "art": "bractus_teen",
                     "kind": {
                         "Craft": [
                             {
@@ -118,64 +133,71 @@
                 {
                     "xp": 6000,
                     "title": "Biscuits 'n Gravy",
-                    "description": "Your Bractus has decided to start preparing Biscuits 'n Gravy for all of the other Bracti nearby.",
+                    "description": "Your Bractus has decided to start preparing Biscuits 'n Gravy for all of the other Bracti nearby. They find this delicious concoction to be quite envigorating, and as a result they can produce yields 25% more often!",
                     "achiever_title": "Breaktus",
+                    "art": "bractus_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.5
+                        "NeighborYieldSpeed": 1.25
                     }
                 },
                 {
                     "xp": 7200,
                     "title": "Gravy 'n Biscuits",
-                    "description": "Your Bractus has decided to start sharing its illustrious Biscuits 'n Gravy recipe with all the other Bracti nearby, allowing them to produce yields 50% faster.",
+                    "description": "Your Bractus has decided to start sharing its illustrious Biscuits 'n Gravy recipe with all the other Bracti nearby, allowing them to produce yields 25% faster.",
                     "achiever_title": "Breakfastus",
+                    "art": "bractus_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.5
+                        "NeighborYieldSpeed": 1.25
                     }
                 },
                 {
                     "xp": 9000,
                     "title": "Son of a Biscuit Eater",
-                    "description": "Your Bractus has developed spikes which are well over a meter long. These deter carnivorous desert unicorns, allowing your now-unhindered Bractus to produce yields at a 15% faster rate.",
+                    "description": "Your Bractus has developed spikes which are well over a meter long. These deter carnivorous desert unicorns, allowing your now-unhindered Bractus to produce yields at a 10% faster rate.",
                     "achiever_title": "Hardtacktus",
+                    "art": "bractus_teen",
                     "kind": {
-                        "YieldSpeed": 1.15
+                        "YieldSpeed": 1.1
                     }
                 },
                 {
                     "xp": 12800,
                     "title": "Butter My Biscuits",
-                    "description": "Your Bractus has developed the ability to draw in its spikes and has now begun to secrete a delicious buttery substance which attracts nearby carnivorous unicorns. Once the unicorns begin licking the buttery substance off of the Bractus's skin, your Bractus releases its spikes again, piercing the pale, white, bioluminescent flesh of the unicorns and draining their vital organs. This newfound source of nutrients allows your Bractus to produce yields 3 times more often!",
+                    "description": "Your Bractus has developed the ability to draw in its spikes and has now begun to secrete a delicious buttery substance which attracts nearby carnivorous unicorns. Once the unicorns begin licking the buttery substance off of the Bractus's skin, your Bractus releases its spikes again, piercing the pale, white, bioluminescent flesh of the unicorns and draining their vital organs. This newfound source of nutrients allows your Bractus to produce yields 95% more often!",
                     "achiever_title": "Buttertus",
+                    "art": "bractus_grown",
                     "kind": {
-                        "YieldSpeed": 3.0
+                        "YieldSpeed": 1.95
                     }
                 },
                 {
                     "xp": 15200,
                     "title": "Artificial Inflation",
-                    "description": "You know how when you open a bag of chips only to find that it's already half empty? Your Bractus figured out how to accomplish something similar by putting more air bubbles in its bread! Expect yields 25% more often!",
+                    "description": "You know how when you open a bag of chips only to find that it's already half empty? Your Bractus figured out how to accomplish something similar by putting more air bubbles in its bread! Expect yields 15% more often!",
                     "achiever_title": "Bubbly Bractus",
+                    "art": "bractus_grown",
                     "kind": {
-                        "YieldSize": 1.25
+                        "YieldSize": 1.15
                     }
                 },
                 {
                     "xp": 18000,
                     "title": "Bread Growers' Association",
-                    "description": "Your Bractus forms an official unofficial regulatory body with the other bractuses nearby, allowing them to produce 50% larger yields!",
+                    "description": "Your Bractus forms an official unofficial regulatory body with the other bractuses nearby, allowing them to produce 35% larger yields!",
                     "achiever_title": "Connected Bractus",
+                    "art": "bractus_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.5
+                        "NeighborYieldSize": 1.35
                     }
                 },
                 {
                     "xp": 21600,
                     "title": "Bread Growers' Guild",
-                    "description": "Your Bractus's Bread Growers' Association is now complete with hazing, violent riots, freemason connections and 50% larger yields for all neighboring Bracti!",
+                    "description": "Your Bractus's Bread Growers' Association is now complete with hazing, violent riots, freemason connections and 35% larger yields for all neighboring Bracti!",
                     "achiever_title": "Deepstate Bractus",
+                    "art": "bractus_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.5
+                        "NeighborYieldSize": 1.35
                     }
                 },
                 {
@@ -183,6 +205,7 @@
                     "title": "Breadbox",
                     "description": "Is your Bractus bigger than a breadbox? Why, now it most certainly is, so you can expect 25% greater yields!",
                     "achiever_title": "Out of the Box Bractus",
+                    "art": "bractus_grown",
                     "kind": {
                         "YieldSize": 1.25
                     }
@@ -192,6 +215,7 @@
                     "title": "Bread of Kings",
                     "description": "Your Bractus has a new crafting recipe you can use to turn a Rolling Pin into a Kingpin!",
                     "achiever_title": "Bactus Kingmaker",
+                    "art": "bractus_grown",
                     "kind": {
                         "Craft": [
                             {
@@ -210,6 +234,490 @@
                                     ]
                                 ],
                                 "makes": "Kingpin"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "name": "Coffea Cyl",
+        "base_yield_duration": 900,
+        "advancements": {
+            "base": {
+                "xp": 0,
+                "title": "Crystal-less Chrysalis",
+                "description": "Born without a single gem to its name, this plant will only be able to give you XP for now.",
+                "achiever_title": "Cyllica Sapling",
+                "art": "coffea_cyl_baby",
+                "kind": {
+                    "Xp": 1.0
+                }
+            },
+            "rest": [
+                {
+                    "xp": 120,
+                    "title": "Intelligent Investment",
+                    "description": "What it lacks in luster, it makes up for in its potential, but for now this Coffea Cyl can only give you an Energy Crystal every hour.",
+                    "achiever_title": "Dull Orange Coffea Cyl",
+                    "art": "coffea_cyl_baby",
+                    "kind": {
+                        "Yield": [
+                            [
+                                [
+                                    1.0,
+                                    [
+                                        1.4,
+                                        1.6
+                                    ]
+                                ],
+                                "Cyl Crystal"
+                            ]
+                        ]
+                    }
+                },
+                {
+                    "xp": 320,
+                    "title": "Night Shift",
+                    "description": "Uncovering some grime reveals that the Cyl Crystal was more orange than originally thought. The cheery hue inspires nearby Coffea Cyl to produce 35% larger yields.",
+                    "achiever_title": "Not-Totally-Blue Orange Coffea Cyl",
+                    "art": "coffea_cyl_baby",
+                    "kind": {
+                        "NeighborYieldSize": 1.35
+                    }
+                },
+                {
+                    "xp": 600,
+                    "title": "Periodic Coffee Table",
+                    "description": "This Coffea Cyl has been working on a formula that should allow it to get more work done in less time. After ingesting it, your plant has its production speed boosted by a factor of 1.15!",
+                    "achiever_title": "Timely Coffea Cyl",
+                    "art": "coffea_cyl_baby",
+                    "kind": {
+                        "YieldSpeed": 1.15
+                    }
+                },
+                {
+                    "xp": 960,
+                    "title": "Caffeine Catastrophe",
+                    "description": "Turns out that formula was just caffeine, and it's made your plant a bit too hyper... Well, at least you get another 15% speed boost.",
+                    "achiever_title": "Speedy Coffea Cyl",
+                    "art": "coffea_cyl_baby",
+                    "kind": {
+                        "YieldSpeed": 1.15
+                    }
+                },
+                {
+                    "xp": 2000,
+                    "title": "Not Quite Ripe Yet",
+                    "description": "Gives off a lingering scent of apples. This plant has become unexpectedly useful, and now has a 7.5% chance of also yielding Coffea Cyl Seeds. This chance will scale up with boosts to yield size (as will the number of seeds you receive).",
+                    "achiever_title": "Orange Orange Coffea Cyl",
+                    "art": "coffea_cyl_kid",
+                    "kind": {
+                        "Yield": [
+                            [
+                                [
+                                    0.075,
+                                    [
+                                        1.5,
+                                        2.3
+                                    ]
+                                ],
+                                "Coffea Cyl Seed"
+                            ]
+                        ]
+                    }
+                },
+                {
+                    "xp": 2560,
+                    "title": "Warm Up",
+                    "description": "If you thought this plant was useful before, it might surprise you to hear that it was just getting started. It's begun to absorb even more light from the sun, and now this Coffea Cyl can support a 15% yield boost!",
+                    "achiever_title": "Glowing Coffea Cyl",
+                    "art": "coffea_cyl_kid",
+                    "kind": {
+                        "YieldSize": 1.15
+                    }
+                },
+                {
+                    "xp": 3200,
+                    "title": "Roasted!",
+                    "description": "The sun's glaring heat has roasted this Cyl's arcane chemical compounds to golden perfection, allowing it to produce 15% more during yields.",
+                    "achiever_title": "Toasted Coffea Cyl",
+                    "art": "coffea_cyl_kid",
+                    "kind": {
+                        "YieldSize": 1.15
+                    }
+                },
+                {
+                    "xp": 5000,
+                    "title": "Sparks of Brilliance",
+                    "description": "The rays passing through the glistening boughs of polished Cyl can now ignite life when certain materials are present, allowing for the flame of life to carry on.",
+                    "achiever_title": "Blazing Coffea Cyl",
+                    "art": "coffea_cyl_teen",
+                    "kind": {
+                        "Craft": [
+                            {
+                                "needs": [
+                                    [
+                                        20,
+                                        "Bread Essence"
+                                    ],
+                                    [
+                                        20,
+                                        "Hacker Spirit"
+                                    ]
+                                ],
+                                "makes": "Cyl Egg"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "xp": 6000,
+                    "title": "Espresso Your Feelings",
+                    "description": "This Coffea Cyl has grown to be quite empathic, and can commonly be found talking with others of its kind about their problems. As a result, its neighbors can produce yields 25% more often.",
+                    "achiever_title": "Hearth-to-Heart Coffea Cyl",
+                    "art": "coffea_cyl_teen",
+                    "kind": {
+                        "NeighborYieldSpeed": 1.25
+                    }
+                },
+                {
+                    "xp": 7200,
+                    "title": "Cylli Me",
+                    "description": "This plant's antics lighten the burden of neighboring plants hard work in the field all day. They even allow them to work 1.25 times faster.",
+                    "achiever_title": " Campfire Coffea Cyl",
+                    "art": "coffea_cyl_teen",
+                    "kind": {
+                        "NeighborYieldSpeed": 1.25
+                    }
+                },
+                {
+                    "xp": 9000,
+                    "title": "100% Organic",
+                    "description": "The natural wildfires of great forests reinvigorate the growth of the forest; the 100% organic flames in the branches of this Cyl are similarly vital, and they seem to allow it to produce yields 10% faster!",
+                    "achiever_title": "Wildfire Coffea Cyl",
+                    "art": "coffea_cyl_teen",
+                    "kind": {
+                        "YieldSpeed": 1.1
+                    }
+                },
+                {
+                    "xp": 12800,
+                    "title": "Crystalline Bean",
+                    "description": "The shine of the mystical crystals forming on this plant's limbs create ripples of warm energy in the air. Occasional sparks ignite in the air, and your plant gains a 95% yield speed boost!",
+                    "achiever_title": "Inferno Coffea Cyl",
+                    "art": "coffea_cyl_grown",
+                    "kind": {
+                        "YieldSpeed": 1.95
+                    }
+                },
+                {
+                    "xp": 15200,
+                    "title": "Clear As Crystal",
+                    "description": "Searing heat on a hot summer's day makes the horizon shimmer and shift; your Coffea Cyl seems to be enveloped with a similar shimmer, and its yields are now 15% more bountiful as a result.",
+                    "achiever_title": "Shimmering Coffea Cyl",
+                    "art": "coffea_cyl_grown",
+                    "kind": {
+                        "YieldSize": 1.15
+                    }
+                },
+                {
+                    "xp": 18000,
+                    "title": "Something Brewing",
+                    "description": "All the plants in the neighborhood know that something is up...Clouds gather around your plant. Of course, these are the effect of its famous coffee, which it shares with others, giving them a 1.35x boost to all yields!",
+                    "achiever_title": "Brewmaster Coffea Cyl",
+                    "art": "coffea_cyl_grown",
+                    "kind": {
+                        "NeighborYieldSize": 1.35
+                    }
+                },
+                {
+                    "xp": 21600,
+                    "title": "Towards the Horizon",
+                    "description": "Shining like a fiery afternoon sky, the beams of light fragmenting from this Coffea Cyl empowers others of its kind nearby with a 35% boost to yields for its neighbors.",
+                    "achiever_title": "Sunset Coffea Cyl",
+                    "art": "coffea_cyl_grown",
+                    "kind": {
+                        "NeighborYieldSize": 1.35
+                    }
+                },
+                {
+                    "xp": 28000,
+                    "title": "Caesar's Pride",
+                    "description": "Named after a season known for landscapes of brightly-colored leaves, the august shine of this plant's crystalline structure multiplies the yield of this plant by 1.25.",
+                    "achiever_title": "Autumn Coffea Cyl",
+                    "art": "coffea_cyl_grown",
+                    "kind": {
+                        "YieldSize": 1.25
+                    }
+                },
+                {
+                    "xp": 40000,
+                    "title": "Orange You Glad?",
+                    "description": "Imbued with the power of the stars themselves, this Coffea Cyl has ascended to a whole new level of power. It's aura can be imbued into a Cyl Wand over time, giving it the power and properties of a Cytrus Staff.",
+                    "achiever_title": "Sol Cyl",
+                    "art": "coffea_cyl_grown",
+                    "kind": {
+                        "Craft": [
+                            {
+                                "needs": [
+                                    [
+                                        200,
+                                        "Bread Essence"
+                                    ],
+                                    [
+                                        200,
+                                        "Hacker Spirit"
+                                    ],
+                                    [
+                                        1,
+                                        "Cyl Wand"
+                                    ]
+                                ],
+                                "makes": "Cytrus Staff"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "name": "Hacker Vibes Vine",
+        "base_yield_duration": 900,
+        "advancements": {
+            "base": {
+                "xp": 0,
+                "title": "Ivy Initiation",
+                "description": "This Vine is at the bottom of the ladder for now, but it will soon climb to the top, giving you XP along the way.",
+                "achiever_title": "Hacker Vibes Seedling",
+                "art": "hacker_vibes_vine_baby",
+                "kind": {
+                    "Xp": 1.0
+                }
+            },
+            "rest": [
+                {
+                    "xp": 120,
+                    "title": "Really Got a Hold On Me",
+                    "description": "You're so fond of this little vine you just wanna love it forever and not let go. After all, it can already produce Hacker Spirit for you every hour!",
+                    "achiever_title": "Clingy Vibes Vine",
+                    "art": "hacker_vibes_vine_baby",
+                    "kind": {
+                        "Yield": [
+                            [
+                                [
+                                    1.0,
+                                    [
+                                        1.4,
+                                        1.6
+                                    ]
+                                ],
+                                "Hacker Spirit"
+                            ]
+                        ]
+                    }
+                },
+                {
+                    "xp": 320,
+                    "title": "Duct Duct Goose",
+                    "description": "This Vine has constructed a vocal cord for itself out of duct tape, which allows it to communicate effectively with other nearby Hacker Vibes Vines using an assortment of goose sounds, increasing the size of their yields by 35%.",
+                    "achiever_title": "Quacking Vine",
+                    "art": "hacker_vibes_vine_baby",
+                    "kind": {
+                        "NeighborYieldSize": 1.35
+                    }
+                },
+                {
+                    "xp": 600,
+                    "title": "Hacker Culture Horticulture",
+                    "description": "This Vine has had some time alone on some forums, and has learned to optimize its production to be 1.15 times as fast.",
+                    "achiever_title": "Clacking Vine",
+                    "art": "hacker_vibes_vine_baby",
+                    "kind": {
+                        "YieldSpeed": 1.15
+                    }
+                },
+                {
+                    "xp": 960,
+                    "title": "Fey Fines",
+                    "description": "The elves made a mistake when they leased this land to you! As compensation, they weave arcane runes into the air, making this plant produce Hacker Spirit 15% faster!",
+                    "achiever_title": "Ley Vibes Vine",
+                    "art": "hacker_vibes_vine_baby",
+                    "kind": {
+                        "YieldSpeed": 1.15
+                    }
+                },
+                {
+                    "xp": 2000,
+                    "title": "Life Vine",
+                    "description": "A saving grace for its species, this Vine now has the ability to spread its offspring throughout the universe by producing speeds. For now, there's a 7.5% chance of getting a bundle of seeds at each yield, but seed spawn rates will increase along with any yield size upgrades.",
+                    "achiever_title": "Lively Vibes Vine",
+                    "art": "hacker_vibes_vine_kid",
+                    "kind": {
+                        "Yield": [
+                            [
+                                [
+                                    0.075,
+                                    [
+                                        1.5,
+                                        2.3
+                                    ]
+                                ],
+                                "Hacker Vibes Vine Seed"
+                            ]
+                        ]
+                    }
+                },
+                {
+                    "xp": 2560,
+                    "title": "Perrenial Programming",
+                    "description": "Making amazing things is the gift that keeps on coming back, and in the case of your vine, it'll keep coming back bigger than ever! Your vine can now produce 15% larger yields.",
+                    "achiever_title": "Reliable Vibes Vine",
+                    "art": "hacker_vibes_vine_kid",
+                    "kind": {
+                        "YieldSize": 1.15
+                    }
+                },
+                {
+                    "xp": 3200,
+                    "title": "Stem Education",
+                    "description": "After taking a class on the optimal stem width to rigidness ratio, your vine is now able to hold more Hacker Spirit aloft on its branches. Expect 15% greater yields!",
+                    "achiever_title": "Educated Vibes Vine",
+                    "art": "hacker_vibes_vine_kid",
+                    "kind": {
+                        "YieldSize": 1.15
+                    }
+                },
+                {
+                    "xp": 5000,
+                    "title": "Ivy League",
+                    "description": "Getting into the Ivy League is no small feat, but this plant makes it look easy. After many all-nighters, it even learned how to engineer life on its own!",
+                    "achiever_title": "Insomnia Vibes Vine",
+                    "art": "hacker_vibes_vine_teen",
+                    "kind": {
+                        "Craft": [
+                            {
+                                "needs": [
+                                    [
+                                        20,
+                                        "Bread Essence"
+                                    ],
+                                    [
+                                        20,
+                                        "Cyl Crystal"
+                                    ]
+                                ],
+                                "makes": "Hacker Egg"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "xp": 6000,
+                    "title": "Morning Glory",
+                    "description": "Most people think that programmers are night owls, but this Hacker Vibes Vine prefers it when the bright rays of early morning sunlight make their leaves glisten with dew. Quiet reflection during these early mornings has made this vine realize how to help its neighbors produce 25% larger yields!",
+                    "achiever_title": "Blossoming Vibes Vine",
+                    "art": "hacker_vibes_vine_teen",
+                    "kind": {
+                        "NeighborYieldSpeed": 1.25
+                    }
+                },
+                {
+                    "xp": 7200,
+                    "title": "Social Climber",
+                    "description": "Having a pretty amicable personality allows this Vine to make friends with peers in its field. Its helpful responses and support makes him a platform for giving others a 25% boost to yield speed.",
+                    "achiever_title": "Medium Vine",
+                    "art": "hacker_vibes_vine_teen",
+                    "kind": {
+                        "NeighborYieldSpeed": 1.25
+                    }
+                },
+                {
+                    "xp": 9000,
+                    "title": "Honeysuckle, I'm Home",
+                    "description": "Due to its size, this Vine has become home to a few small creatures, especially birds. Of course, these creatures take care of their home sweet home, and help make yields 10% faster.",
+                    "achiever_title": "Homely Vibes Vine",
+                    "art": "hacker_vibes_vine_teen",
+                    "kind": {
+                        "YieldSpeed": 1.1
+                    }
+                },
+                {
+                    "xp": 12800,
+                    "title": "Scandent Sourcerer",
+                    "description": "This code wizard uses some spooky black magic shortcuts to make yields happen 95% more often.",
+                    "achiever_title": "Mystical Vibes Vine",
+                    "art": "hacker_vibes_vine_grown",
+                    "kind": {
+                        "YieldSpeed": 1.95
+                    }
+                },
+                {
+                    "xp": 15200,
+                    "title": "Back to Our Roots",
+                    "description": "Remembering its passion-filled projects from its youth, this Vine redoubles its efforts into making, which boosts the magnitude of its production by 1.15.",
+                    "achiever_title": "Nostalgia Vibes Vine",
+                    "art": "hacker_vibes_vine_grown",
+                    "kind": {
+                        "YieldSize": 1.15
+                    }
+                },
+                {
+                    "xp": 18000,
+                    "title": "Ivy Induction",
+                    "description": "When your coding prowess is well-known, it isn't unheard of for secret organizations to reach out. This Vine joined its local cult, sharing its skills as well as improving yields for neighbors by 35%.",
+                    "achiever_title": "Deepstate Vibes Vine",
+                    "art": "hacker_vibes_vine_grown",
+                    "kind": {
+                        "NeighborYieldSize": 1.35
+                    }
+                },
+                {
+                    "xp": 21600,
+                    "title": "Cult Conduction",
+                    "description": "With your Vine's contributions to the cult, it has become a high-ranking member. Your Vine uses its new status to support nearby members a further 35%.",
+                    "achiever_title": "Masterful Vine",
+                    "art": "hacker_vibes_vine_grown",
+                    "kind": {
+                        "NeighborYieldSize": 1.35
+                    }
+                },
+                {
+                    "xp": 28000,
+                    "title": "Cloud Vine",
+                    "description": "Your Hacker Vibes Vine can now upload all of its extra Hacker Spirit onto the cloud, so it can simply focus on producing new Hacker Spirit (and other goods as the case may be, of course). Expect 25% larger yields!",
+                    "achiever_title": "Head in the Clouds Vine",
+                    "art": "hacker_vibes_vine_grown",
+                    "kind": {
+                        "YieldSize": 1.25
+                    }
+                },
+                {
+                    "xp": 40000,
+                    "title": "Botany Oddity",
+                    "description": "After many protein pills and excessive amounts of coffee, this Vine has grown into space! Its many leaves float in a peculiar way, and it says the planet looks pretty blue. While watching the stars swirl around, it had an epiphany, and can now upgrade your Vine Keyboards into Jungleboards.",
+                    "achiever_title": "Otherworldly Vibes Vine",
+                    "art": "hacker_vibes_vine_grown",
+                    "kind": {
+                        "Craft": [
+                            {
+                                "needs": [
+                                    [
+                                        200,
+                                        "Bread Essence"
+                                    ],
+                                    [
+                                        200,
+                                        "Cyl Crystal"
+                                    ],
+                                    [
+                                        1,
+                                        "Vine Keyboard"
+                                    ]
+                                ],
+                                "makes": "Jungleboard"
                             }
                         ]
                     }
