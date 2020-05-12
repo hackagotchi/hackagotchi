@@ -1,6 +1,5 @@
 use super::{Message, TOKEN};
 use regex::Regex;
-use std::env::var;
 
 #[derive(Debug)]
 pub struct PaidInvoice {
@@ -10,6 +9,7 @@ pub struct PaidInvoice {
     pub reason: String,
 }
 
+use std::env::var;
 lazy_static::lazy_static! {
     pub static ref ID: String = var("BANKER_ID").unwrap();
     pub static ref CHAT_ID: String = var("BANKER_CHAT").unwrap();

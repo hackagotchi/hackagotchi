@@ -1,7 +1,7 @@
 [
     {
         "name": "Bractus",
-        "base_yield_duration": 900,
+        "base_yield_duration": 720,
         "advancements": {
             "base": {
                 "xp": 0,
@@ -68,17 +68,17 @@
                 {
                     "xp": 2000,
                     "title": "On the Rise",
-                    "description": "Your Bractus has grown quite high above the ground, and is now able to give you a Bractus Seed 7.5% of the time. Boosts to the size of your Bractus's yields will increase this chance (as well as the number of seeds you receive).",
+                    "description": "Your Bractus has grown quite high above the ground, and is now able to give you a Bractus Seed 7% of the time. Boosts to the size of your Bractus's yields will increase this chance (as well as the number of seeds you receive).",
                     "achiever_title": "Rose Bractus",
                     "art": "bractus_kid",
                     "kind": {
                         "Yield": [
                             [
                                 [
-                                    0.075,
+                                    0.07,
                                     [
                                         1.5,
-                                        2.3
+                                        2.2
                                     ]
                                 ],
                                 "Bractus Seed"
@@ -243,7 +243,7 @@
     },
     {
         "name": "Coffea Cyl",
-        "base_yield_duration": 900,
+        "base_yield_duration": 720,
         "advancements": {
             "base": {
                 "xp": 0,
@@ -310,17 +310,17 @@
                 {
                     "xp": 2000,
                     "title": "Not Quite Ripe Yet",
-                    "description": "Gives off a lingering scent of apples. This plant has become unexpectedly useful, and now has a 7.5% chance of also yielding Coffea Cyl Seeds. This chance will scale up with boosts to yield size (as will the number of seeds you receive).",
+                    "description": "Gives off a lingering scent of apples. This plant has become unexpectedly useful, and now has a 7% chance of also yielding Coffea Cyl Seeds. This chance will scale up with boosts to yield size (as will the number of seeds you receive).",
                     "achiever_title": "Orange Orange Coffea Cyl",
                     "art": "coffea_cyl_kid",
                     "kind": {
                         "Yield": [
                             [
                                 [
-                                    0.075,
+                                    0.07,
                                     [
                                         1.5,
-                                        2.3
+                                        2.2
                                     ]
                                 ],
                                 "Coffea Cyl Seed"
@@ -485,7 +485,7 @@
     },
     {
         "name": "Hacker Vibes Vine",
-        "base_yield_duration": 900,
+        "base_yield_duration": 720,
         "advancements": {
             "base": {
                 "xp": 0,
@@ -552,17 +552,17 @@
                 {
                     "xp": 2000,
                     "title": "Life Vine",
-                    "description": "A saving grace for its species, this Vine now has the ability to spread its offspring throughout the universe by producing speeds. For now, there's a 7.5% chance of getting a bundle of seeds at each yield, but seed spawn rates will increase along with any yield size upgrades.",
+                    "description": "A saving grace for its species, this Vine now has the ability to spread its offspring throughout the universe by producing speeds. For now, there's a 7% chance of getting a bundle of seeds at each yield, but seed spawn rates will increase along with any yield size upgrades.",
                     "achiever_title": "Lively Vibes Vine",
                     "art": "hacker_vibes_vine_kid",
                     "kind": {
                         "Yield": [
                             [
                                 [
-                                    0.075,
+                                    0.07,
                                     [
                                         1.5,
-                                        2.3
+                                        2.2
                                     ]
                                 ],
                                 "Hacker Vibes Vine Seed"

@@ -24,45 +24,9 @@ pub enum Category {
     Sale = 9,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum CategoryError {
-    UnknownCategory,
-    InvalidAttributeValue,
-    InvalidNumber(std::num::ParseIntError),
-}
-impl fmt::Display for CategoryError {
+impl fmt::Display for Category {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use CategoryError::*;
-
-        match self {
-            UnknownCategory => write!(f, "Unknown Category!"),
-            InvalidAttributeValue => write!(f, "Category AttributeValue wasn't a number!"),
-            InvalidNumber(e) => {
-                write!(f, "Couldn't parse number in Category AttributeValue: {}", e)
-            }
-        }
-    }
-}
-impl From<std::num::ParseIntError> for CategoryError {
-    fn from(o: std::num::ParseIntError) -> Self {
-        CategoryError::InvalidNumber(o)
-    }
-}
-
-impl std::convert::TryFrom<u8> for Category {
-    type Error = CategoryError;
-
-    fn try_from(o: u8) -> Result<Self, Self::Error> {
-        use Category::*;
-
-        Ok(match o {
-            0 => Profile,
-            1 => Gotchi,
-            2 => Misc,
-            3 => Land,
-            9 => Sale,
-            _ => return Err(CategoryError::UnknownCategory),
-        })
+        write!(f, "{}", format!("{:?}", self).to_lowercase())
     }
 }
 
@@ -88,6 +52,49 @@ impl Category {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum CategoryError {
+    UnknownCategory,
+    InvalidAttributeValue,
+    InvalidNumber(std::num::ParseIntError),
+}
+impl fmt::Display for CategoryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use CategoryError::*;
+
+        match self {
+            UnknownCategory => write!(f, "Unknown Category!"),
+            InvalidAttributeValue => write!(f, "Category AttributeValue wasn't a number!"),
+            InvalidNumber(e) => {
+                write!(f, "Couldn't parse number in Category AttributeValue: {}", e)
+            }
+        }
+    }
+}
+
+impl From<std::num::ParseIntError> for CategoryError {
+    fn from(o: std::num::ParseIntError) -> Self {
+        CategoryError::InvalidNumber(o)
+    }
+}
+
+impl std::convert::TryFrom<u8> for Category {
+    type Error = CategoryError;
+
+    fn try_from(o: u8) -> Result<Self, Self::Error> {
+        use Category::*;
+
+        Ok(match o {
+            0 => Profile,
+            1 => Gotchi,
+            2 => Misc,
+            3 => Land,
+            9 => Sale,
+            _ => return Err(CategoryError::UnknownCategory),
+        })
+    }
+}
+
 pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
     db.get_item(rusoto_dynamodb::GetItemInput {
         key: Profile::key_item(user_id),
@@ -97,6 +104,22 @@ pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
     .await
     .map(|x| x.item.is_some())
     .unwrap_or(false)
+}
+
+pub async fn get_possession(db: &DynamoDbClient, key: Key) -> Result<Possession, String> {
+    db.get_item(rusoto_dynamodb::GetItemInput {
+        key: key.clone().into_item(),
+        table_name: TABLE_NAME.to_string(),
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("couldn't read {:?} from db to get possession: {}", key, e))
+    .and_then(|x| {
+        match Possession::from_item(&x.item.ok_or_else(|| format!("no item at {:?} to get possession for", key))?) {
+            Ok(p) => Ok(p),
+            Err(e) => Err(format!("couldn't parse possession to get possession: {}", e)),
+        }
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -149,7 +172,8 @@ impl fmt::Display for AttributeParseError {
     }
 }
 
-pub async fn profill(db: &DynamoDbClient) -> Result<(), String> {
+/// This function empties someone's profile, setting their xp to zero.
+pub async fn goblin_slaughter(db: &DynamoDbClient) -> Result<(), String> {
     let profiles = Profile::fetch_all(db).await?;
 
     db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
@@ -180,7 +204,8 @@ pub async fn profill(db: &DynamoDbClient) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn landfill(
+/// This function removes the plants from all tiles.
+pub async fn goblin_stomp(
     db: &DynamoDbClient,
     to_farming: &crossbeam_channel::Sender<super::FarmingInputEvent>,
 ) -> Result<(), String> {
@@ -332,6 +357,7 @@ impl Tile {
 pub struct Plant {
     pub xp: u64,
     pub until_yield: f32,
+    pub pedigree: Vec<SeedGrower>,
     pub archetype_handle: ArchetypeHandle,
 }
 
@@ -347,11 +373,12 @@ impl std::ops::Deref for Plant {
 }
 
 impl Plant {
-    pub fn new(ah: ArchetypeHandle) -> Self {
+    pub fn from_seed(seed: Possessed<Seed>) -> Self {
         let mut s = Self {
             xp: 0,
             until_yield: 0.0,
-            archetype_handle: ah,
+            archetype_handle: CONFIG.find_plant_handle(&seed.inner.grows_into).unwrap(),
+            pedigree: seed.inner.pedigree
         };
         s.until_yield = s.base_yield_duration;
         s
@@ -404,6 +431,24 @@ impl Plant {
                 .ok_or(WronglyTypedField("archetype_handle"))?
                 .parse()
                 .map_err(|e| IntFieldParse("archetype_handle", e))?,
+            pedigree: m
+                .get("pedigree")
+                .ok_or(MissingField("pedigree"))?
+                .l
+                .as_ref()
+                .ok_or(WronglyTypedField("pedigree"))?
+                .iter()
+                .filter_map(|v| {
+                    match v.m.as_ref() {
+                        Some(m) => match SeedGrower::from_item(m) {
+                            Ok(s) => return Some(s),
+                            Err(e) => println!("error parsing pedigree item: {}", e),
+                        },
+                        None => println!("non-map item in pedigree"),
+                    };
+                    None
+                })
+                .collect()
         })
     }
 
@@ -432,6 +477,13 @@ impl Plant {
                             ..Default::default()
                         },
                     ),
+                    (
+                        "pedigree".to_string(),
+                        AttributeValue {
+                            l: Some(self.pedigree.iter().cloned().map(|sg| sg.into()).collect()),
+                            ..Default::default()
+                        },
+                    )
                 ]
                 .iter()
                 .cloned()
@@ -584,6 +636,25 @@ impl Hacksteader {
         {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("couldn't delete in db: {}", e)),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn take(db: &DynamoDbClient, key: Key) -> Result<Possession, String> {
+        match db
+            .delete_item(rusoto_dynamodb::DeleteItemInput {
+                key: key.into_item(),
+                table_name: TABLE_NAME.to_string(),
+                return_values: Some("ALL_OLD".to_string()),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(rusoto_dynamodb::DeleteItemOutput { attributes: Some(item), .. }) => {
+                Possession::from_item(&item).map_err(|e| format!("couldn't parse value returned from delete: {}", e))
+            }
+            Err(e) => Err(format!("couldn't delete in db: {}", e)),
+            _ => Err(format!("no attributes returned!")),
         }
     }
 

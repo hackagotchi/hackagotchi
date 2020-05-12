@@ -125,5 +125,58 @@
             "kind": {
                 "Keepsake": {}
             }
+        },
+        {
+            "name": "Coffea Cyl Seed",
+            "description": "A special species of coffee bean, descended from Coffea arabica and a host of other species. Instead of beans, this plant is grown for the crystals that gather in clusters on its limbs, inside of which the magical forces of the universe coalesce.",
+            "kind": {
+                "Seed": {
+                    "grows_into": "Coffea Cyl"
+                }
+            }
+        },
+        {
+            "name": "Cyl Egg",
+            "description": "Veins of pure arcane energy course throughout the egg, and holding it quickly makes your hands shaky and numb.",
+            "kind": {
+                "Keepsake": {}
+            }
+        },
+        {
+            "name": "Cyl Wand",
+            "description": "You aren't supposed to have this yet.",
+            "kind": {
+                "Keepsake": {}
+            }
+        },
+        {
+            "name": "Cytrus Staff",
+            "description": "You aren't supposed to have this yet.",
+            "kind": {
+                "Keepsake": {}
+            }
+        },
+        {
+            "name": "Hacker Vibes Vine Seed",
+            "description": "Just holding the sprout in your hands fills you with the desire to make something! Surely, this seed is in for some amazing things.",
+            "kind": {
+                "Seed": {
+                    "grows_into": "Hacker Vibes Vine"
+                }
+            }
+        },
+        {
+            "name": "Vine Keyboard",
+            "description": "You aren't supposed to have this yet.",
+            "kind": {
+                "Keepsake": {}
+            }
+        },
+        {
+            "name": "Jungleboard",
+            "description": "You aren't supposed to have this yet.",
+            "kind": {
+                "Keepsake": {}
+            }
         }
     ]

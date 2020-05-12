@@ -2,6 +2,34 @@ use super::hacksteader;
 use hacksteader::{Category, Possession};
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 
+use std::env::var;
+lazy_static::lazy_static! {
+
+    pub static ref HACKMARKET_LOG_CHAT: String = var("HACKMARKET_LOG_CHAT").unwrap();
+}
+
+pub async fn log_blocks(blocks: Vec<serde_json::Value>) -> Result<(), String> {
+    let o = serde_json::json!({
+        "channel": *HACKMARKET_LOG_CHAT,
+        "token": *super::TOKEN,
+        "blocks": blocks
+    });
+
+    log::debug!("{}", serde_json::to_string_pretty(&o).unwrap());
+
+    // TODO: use response
+    let client = reqwest::Client::new();
+    client
+        .post("https://slack.com/api/chat.postMessage")
+        .bearer_auth(&*super::TOKEN)
+        .json(&o)
+        .send()
+        .await
+        .map_err(|e| format!("couldn't log blocks: {}", e))?;
+
+    Ok(())
+}
+
 #[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Sale {
     pub price: u64,

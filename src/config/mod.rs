@@ -23,20 +23,26 @@ pub struct Config {
 }
 impl Config {
     #[allow(dead_code)]
-    fn find_plant<S: AsRef<str>>(&self, name: &S) -> Result<&PlantArchetype, ConfigError> {
+    pub fn find_plant<S: AsRef<str>>(&self, name: &S) -> Result<&PlantArchetype, ConfigError> {
         self.plant_archetypes
             .iter()
             .find(|x| name.as_ref() == x.name)
             .ok_or(ConfigError::UnknownArchetypeName(name.as_ref().to_string()))
     }
+    pub fn find_plant_handle<S: AsRef<str>>(&self, name: &S) -> Result<ArchetypeHandle, ConfigError> {
+        self.plant_archetypes
+            .iter()
+            .position(|x| name.as_ref() == x.name)
+            .ok_or(ConfigError::UnknownArchetypeName(name.as_ref().to_string()))
+    }
     #[allow(dead_code)]
-    fn find_possession<S: AsRef<str>>(&self, name: &S) -> Result<&Archetype, ConfigError> {
+    pub fn find_possession<S: AsRef<str>>(&self, name: &S) -> Result<&Archetype, ConfigError> {
         self.possession_archetypes
             .iter()
             .find(|x| name.as_ref() == x.name)
             .ok_or(ConfigError::UnknownArchetypeName(name.as_ref().to_string()))
     }
-    fn find_possession_handle<S: AsRef<str>>(
+    pub fn find_possession_handle<S: AsRef<str>>(
         &self,
         name: &S,
     ) -> Result<ArchetypeHandle, ConfigError> {
@@ -47,6 +53,7 @@ impl Config {
     }
 }
 
+// I should _really_ use a different version of this for PlantArchetypes and PossessionArchetypes ...
 pub type ArchetypeHandle = usize;
 
 lazy_static::lazy_static! {
@@ -275,8 +282,8 @@ impl AdvancementSum for PlantAdvancementSum {
             .map(|(SpawnRate(guard, (lo, hi)), name)| {
                 (
                     SpawnRate(
-                        (guard * yield_size_multiplier).max(1.0),
-                        (lo * yield_size_multiplier, hi * yield_size_multiplier)
+                        (guard * yield_size_multiplier).min(1.0),
+                        (lo * yield_size_multiplier, hi * yield_size_multiplier),
                     ),
                     name,
                 )
@@ -305,6 +312,7 @@ pub trait AdvancementSum: DeserializeOwned + PartialEq + fmt::Debug {
 pub struct Advancement<S: AdvancementSum> {
     pub kind: S::Kind,
     pub xp: u64,
+    pub art: String,
     pub title: String,
     pub description: String,
     pub achiever_title: String,
