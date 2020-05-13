@@ -1,7 +1,7 @@
 [
     {
         "name": "Bractus",
-        "base_yield_duration": 720,
+        "base_yield_duration": 2880,
         "advancements": {
             "base": {
                 "xp": 0,
@@ -266,7 +266,7 @@
     },
     {
         "name": "Coffea Cyl",
-        "base_yield_duration": 720,
+        "base_yield_duration": 2880,
         "advancements": {
             "base": {
                 "xp": 0,
@@ -531,7 +531,7 @@
     },
     {
         "name": "Hacker Vibes Vine",
-        "base_yield_duration": 720,
+        "base_yield_duration": 2880,
         "advancements": {
             "base": {
                 "xp": 0,

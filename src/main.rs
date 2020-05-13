@@ -444,6 +444,8 @@ fn hackstead_blocks(
         });
     }
     blocks.push(comment(format!("Last Advancement: \"{}\"", hs_adv.title)));
+    blocks.push(comment(format!("If you had enough Land Deeds, you could buy {} pieces of land", hs_adv_sum.land)));
+
 
     blocks.push(json!({ "type": "divider" }));
     for tile in land.into_iter() {
@@ -498,24 +500,39 @@ fn hackstead_blocks(
             }
             if !sum.recipes.is_empty() {
                 let recipes = sum.recipes.iter().map(|r| (r.satisfies(&inventory), r));
-                blocks.push(json!({
-                    "type": "section",
-                    "text": mrkdwn(format!(
-                        "*{}/{}* recipes craftable",
-                        sum.recipes.iter().filter(|r| r.satisfies(&inventory)).count(),
-                        sum.recipes.len()
-                    )),
-                    "accessory": {
-                        "type": "button",
-                        "text": plain_text("Crafting"),
-                        "value": serde_json::to_string(&(
-                            &user_id,
-                            p.archetype_handle,
-                            recipes.collect::<Vec<_>>()
-                        )).unwrap(),
-                        "action_id": "crafting",
-                    }
-                }));
+                if let Some(craft) = &p.craft {
+                    blocks.push(json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            "*Crafting {}*\n{}  {:.3} minutes to go",
+                            config::CONFIG
+                                .possession_archetypes
+                                .get(craft.makes)
+                                .map(|x| x.name.as_str())
+                                .unwrap_or("unknown"),
+                            progress_bar(30, 1.0 - craft.until_finish/craft.total_cycles),
+                            (craft.until_finish / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32
+                        ))
+                    }));
+                } else {
+                    blocks.push(json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            "*{}/{}* recipes craftable",
+                            sum.recipes.iter().filter(|r| r.satisfies(&inventory)).count(),
+                            sum.recipes.len()
+                        )),
+                        "accessory": {
+                            "type": "button",
+                            "text": plain_text("Crafting"),
+                            "value": serde_json::to_string(&(
+                                &tile.id,
+                                recipes.collect::<Vec<_>>()
+                            )).unwrap(),
+                            "action_id": "crafting",
+                        }
+                    }));
+                }
             }
         } else {
             blocks.push(json!({
@@ -557,7 +574,7 @@ fn hackstead_blocks(
                     "value": serde_json::to_string(&(p.archetype_handle, p.xp)).unwrap(),
                     "action_id": "levels",
                 }));
-                
+
                 blocks.push(json!({
                     "type": "actions",
                     "elements": actions,
@@ -1287,7 +1304,10 @@ async fn action_endpoint(
                     })?;
 
                 to_farming
-                    .send(FarmingInputEvent::PlantSeed(tile_id, hacksteader::Plant::from_seed(seed)))
+                    .send(FarmingInputEvent::PlantSeed(
+                        tile_id,
+                        hacksteader::Plant::from_seed(seed),
+                    ))
                     .unwrap();
 
                 to_farming
@@ -1493,23 +1513,31 @@ async fn action_endpoint(
             .launch()
             .await?
         }
-        "crafting" => {
-            use config::Recipe;
-            let (user, plant_ah, recipes_raw): (
-                String,
-                config::ArchetypeHandle,
-                Vec<(bool, Recipe<config::ArchetypeHandle>)>,
-            ) = serde_json::from_str(&action.value).unwrap();
+        "craft" => {
+            let (tile_id, recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
+                serde_json::from_str(&action.value).unwrap();
 
-            let recipes: Vec<_> = recipes_raw
-                .into_iter()
-                .map(|(i, r)| (i, r.lookup_handles().expect("invalid archetype handle")))
-                .collect();
+            to_farming
+                .send(FarmingInputEvent::BeginCraft { tile_id, recipe })
+                .expect("couldn't send to farming");
+
+            json!({
+                "response_action": "clear",
+            })
+        }
+        "crafting" => {
+            let (tile_id, recipes): (
+                uuid::Uuid,
+                Vec<(bool, config::Recipe<config::ArchetypeHandle>)>,
+            ) = serde_json::from_str(&action.value).unwrap();
 
             let blocks = recipes
                 .into_iter()
-                .enumerate()
-                .flat_map(|(recipe_i, (possible, recipe))| {
+                .flat_map(|(possible, raw_recipe)| {
+                    let recipe = raw_recipe
+                        .clone()
+                        .lookup_handles()
+                        .expect("invalid archetype handle");
                     let mut b = Vec::with_capacity(recipe.needs.len() + 2);
 
                     let mut head = json!({
@@ -1529,11 +1557,10 @@ async fn action_endpoint(
                                 "style": "primary",
                                 "text": plain_text(format!("Craft {}", recipe.makes.name)),
                                 "value": serde_json::to_string(&(
-                                    &user,
-                                    plant_ah,
-                                    recipe_i,
+                                    &tile_id,
+                                    raw_recipe,
                                 )).unwrap(),
-                                "action_id": "Craft",
+                                "action_id": "craft",
                             }),
                         );
                     }
@@ -1581,10 +1608,7 @@ async fn action_endpoint(
                 .map(|(i, adv)| {
                     let text = format!(
                         "*{}* - {} - {}xp\n_{}_",
-                        adv.title,
-                        adv.achiever_title,
-                        adv.xp,
-                        adv.description,
+                        adv.title, adv.achiever_title, adv.xp, adv.description,
                     );
 
                     if i <= current_position {
@@ -1856,7 +1880,7 @@ async fn event(
 
     lazy_static::lazy_static! {
         static ref SPAWN_POSSESSION: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?(([0-9]+)? )(.+)"
+            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?(([0-9]+) )?(.+)"
         ).unwrap();
         static ref DUMP_GP: regex::Regex = regex::Regex::new(
             "<@([A-z|0-9]+)> dump <@([A-z|0-9]+)> ([0-9]+)"
@@ -1945,7 +1969,13 @@ async fn event(
                      comment("LET'S HACKSTEAD, FRED!")
                 ]).await?;
             }
-        } else if let Some(Sale { name, price, id, category, ..  }) = MARKET_FEES_INVOICE
+        } else if let Some(Sale {
+            name,
+            price,
+            id,
+            category,
+            ..
+        }) = MARKET_FEES_INVOICE
             .captures(&paid_invoice.reason)
             .and_then(|c| captures_to_sale(&c))
         {
@@ -1982,11 +2012,18 @@ async fn event(
                 )
                 .await
             }?;
-        } else if let Some(Sale { id, category, name, price, from: Some(seller) }) = MARKET_PURCHASE
+        } else if let Some(Sale {
+            id,
+            category,
+            name,
+            price,
+            from: Some(seller),
+        }) = MARKET_PURCHASE
             .captures(&paid_invoice.reason)
             .and_then(|c| captures_to_sale(&c))
         {
             use futures::future::TryFutureExt;
+            tokio::time::delay_for(std::time::Duration::from_secs(1)).await;
 
             let db = dyn_db();
             let key = hacksteader::Key { category, id };
@@ -1996,7 +2033,7 @@ async fn event(
                     banker::pay(
                         paid_invoice.invoicee.clone(),
                         price,
-                        format!("the {} you tried to buy has already been sold", name)
+                        format!("the {} you tried to buy has already been sold", name),
                     )
                     .await?;
                     return Ok(());
@@ -2273,7 +2310,9 @@ async fn event(
         }
         if let Some(archetype_handle) = GOBLIN_NAB.captures(&r.text).and_then(|c| {
             if c.get(1)?.as_str() == &*ID {
-                config::CONFIG.find_possession_handle(&c.get(2)?.as_str()).ok()
+                config::CONFIG
+                    .find_possession_handle(&c.get(2)?.as_str())
+                    .ok()
             } else {
                 None
             }
@@ -2319,7 +2358,7 @@ async fn event(
                                     ]
                                     .iter()
                                     .cloned()
-                                    .collect()
+                                    .collect(),
                                 }),
                                 ..Default::default()
                             })
@@ -2372,6 +2411,10 @@ pub enum FarmingInputEvent {
     ActivateUser(String),
     ApplyItem(uuid::Uuid, config::ArchetypeHandle),
     PlantSeed(uuid::Uuid, hacksteader::Plant),
+    BeginCraft {
+        tile_id: uuid::Uuid,
+        recipe: config::Recipe<config::ArchetypeHandle>,
+    },
 }
 
 #[tokio::main]
@@ -2406,6 +2449,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         let mut active_users: HashMap<String, bool> = HashMap::new();
         let mut item_effects: HashMap<uuid::Uuid, ItemEffect> = HashMap::new();
         let mut plant_queue: HashMap<uuid::Uuid, hacksteader::Plant> = HashMap::new();
+        let mut craft_queue: HashMap<uuid::Uuid, config::Recipe<_>> = HashMap::new();
 
         async move {
             use futures::stream::{self, StreamExt, TryStreamExt};
@@ -2451,6 +2495,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         PlantSeed(tile_id, plant) => {
                             plant_queue.insert(tile_id, plant);
                         }
+                        BeginCraft { tile_id, recipe } => {
+                            craft_queue.insert(tile_id, recipe);
+                        }
                     }
                 }
 
@@ -2462,7 +2509,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
                 let db = dyn_db();
 
-                let hacksteaders: Vec<Hacksteader> = match stream::iter(active_users.clone())
+                let mut deletions = vec![];
+                let mut possessions = vec![];
+                let mut dms: Vec<(String, [Value; 2])> = Vec::new();
+
+                let mut hacksteaders: Vec<Hacksteader> = match stream::iter(active_users.clone())
                     .map(|(id, _)| Hacksteader::from_db(&db, id))
                     .buffer_unordered(50)
                     .try_collect::<Vec<_>>()
@@ -2474,6 +2525,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         continue;
                     }
                 };
+
+                for Hacksteader {
+                    land, inventory, ..
+                } in hacksteaders.iter_mut()
+                {
+                    for tile in land.iter_mut() {
+                        let plant = match &mut tile.plant {
+                            Some(pl) => pl,
+                            None => continue,
+                        };
+
+                        if let Some(recipe) = craft_queue.remove(&tile.id) {
+                            let should_take: usize =
+                                recipe.needs.iter().map(|(n, _)| n).sum::<usize>();
+                            let mut used_resources = recipe
+                                .needs
+                                .into_iter()
+                                .flat_map(|(count, ah)| {
+                                    inventory
+                                        .iter()
+                                        .filter(move |p| p.archetype_handle == ah)
+                                        .map(|p| p.key())
+                                        .take(count)
+                                })
+                                .collect::<Vec<_>>();
+
+                            if should_take == used_resources.len() {
+                                deletions.append(&mut used_resources);
+
+                                plant.craft = Some(hacksteader::Craft {
+                                    until_finish: recipe.time,
+                                    total_cycles: recipe.time,
+                                    makes: recipe.makes,
+                                });
+                            } else {
+                                dms.push((
+                                    tile.steader.clone(),
+                                    [
+                                        comment("you don't have enough resources to craft that"),
+                                        comment("nice try tho"),
+                                    ],
+                                ));
+                            }
+                        }
+                    }
+                }
 
                 // we'll be frequently looking up profiles by who owns them to award xp.
                 let mut profiles: HashMap<String, Profile> = hacksteaders
@@ -2500,10 +2597,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         ))
                     })
                     .collect();
-
-                let mut possessions = vec![];
-
-                let mut dms: Vec<(String, [Value; 2])> = Vec::new();
 
                 for ((_, profile), (user, fresh)) in
                     profiles.iter_mut().zip(active_users.clone().into_iter())
@@ -2538,41 +2631,107 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                     };
 
-                    let elapsed = SystemTime::now()
-                        .duration_since(profile.last_farm)
-                        .unwrap_or_default()
-                        .as_millis()
-                        / (FARM_CYCLE_MILLIS as u128);
-
                     // elapsed for this plant is the base amount of time plus some extras
                     // in case something is speeding up time for this plant
-                    let boosted_elapsed = if let Some(effect) = item_effects.get(&tile.id).clone() {
-                        // decrement counter, remove if 0
-                        if effect.extra_cycles_remaining == 0 {
-                            item_effects.remove(&tile.id);
-                            elapsed
-                        } else {
-                            // calculate award, handle edge case that there's a bit left
-                            let base_award =
-                                effect.extra_cycles_total / effect.duration_cycles_total;
-                            let to_award = if effect.extra_cycles_remaining < base_award {
-                                effect.extra_cycles_remaining
-                            } else {
-                                base_award
-                            };
+                    let boosted_elapsed = {
+                        let elapsed = SystemTime::now()
+                            .duration_since(profile.last_farm)
+                            .unwrap_or_default()
+                            .as_millis()
+                            / (FARM_CYCLE_MILLIS as u128);
 
-                            let i = item_effects.get_mut(&tile.id).unwrap();
-                            i.extra_cycles_remaining -= to_award;
-
-                            elapsed + to_award as u128
+                        // we don't want to add the boosted_elapsed here, then your item effects
+                        // would have to be "paid for" later (your farm wouldn't work for however
+                        // much time the effect gave you).
+                        if elapsed > 0 {
+                            profile.last_farm += Duration::from_millis(
+                                (FARM_CYCLE_MILLIS as u128 * elapsed)
+                                    .try_into()
+                                    .unwrap_or_else(|e| {
+                                        error!(
+                                            "too many farm cycle millis * elapsed[{}]: {}",
+                                            elapsed, e
+                                        );
+                                        0
+                                    }),
+                            );
                         }
-                    } else {
-                        elapsed
+
+                        if let Some(effect) = item_effects.get(&tile.id).clone() {
+                            // decrement counter, remove if 0
+                            if effect.extra_cycles_remaining == 0 {
+                                info!("removing +{} cyles effect", effect.extra_cycles_total);
+                                item_effects.remove(&tile.id);
+                                elapsed
+                            } else {
+                                // calculate award, handle edge case that there's a bit left
+                                let base_award =
+                                    effect.extra_cycles_total / effect.duration_cycles_total;
+                                let to_award = if effect.extra_cycles_remaining < base_award {
+                                    effect.extra_cycles_remaining
+                                } else {
+                                    base_award
+                                };
+
+                                let i = item_effects.get_mut(&tile.id).unwrap();
+                                i.extra_cycles_remaining -= to_award;
+
+                                elapsed + to_award as u128
+                            }
+                        } else {
+                            elapsed
+                        }
                     };
 
-                    info!("triggering {} farming cycles for {}", elapsed, profile.id);
+                    info!(
+                        "triggering {} farming cycles for {}",
+                        boosted_elapsed, profile.id
+                    );
                     for _ in 0..boosted_elapsed {
                         let plant_sum = plant.advancements.sum(plant.xp);
+
+                        plant.craft = match plant.craft.take() {
+                            Some(mut craft) => {
+                                if craft.until_finish > plant_sum.yield_speed_multiplier {
+                                    craft.until_finish -= plant_sum.yield_speed_multiplier;
+                                    Some(craft)
+                                } else {
+                                    let p = Possession::new(
+                                        craft.makes,
+                                        hacksteader::Owner::crafter(tile.steader.clone()),
+                                    );
+                                    possessions.push(p.clone());
+                                    dms.push((
+                                        tile.steader.clone(),
+                                        [
+                                            json!({
+                                                "type": "section",
+                                                "text": mrkdwn(format!(
+                                                    "Your *{}* has finished crafting a {} *{}* for you!",
+                                                    plant.name,
+                                                    emojify(&p.name),
+                                                    p.name
+                                                )),
+                                                "accessory": {
+                                                    "type": "image",
+                                                    "image_url": format!(
+                                                        "http://{}/gotchi/img/{}/{}.png",
+                                                        *URL,
+                                                        p.kind.category(),
+                                                        filify(&p.name)
+                                                    ),
+                                                    "alt_text": "Hackpheus holding a Gift!",
+                                                }
+                                            }),
+                                            comment("YAY FREE STUFFZ 'CEPT LIKE IT'S NOT FREE")
+                                        ]
+                                    ));
+                                    None
+                                }
+                            }
+                            None => None,
+                        };
+
                         plant.until_yield = match plant.until_yield
                             - plant_sum.yield_speed_multiplier
                         {
@@ -2592,6 +2751,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                                 );
                                                 if let Some(s) = p.kind.seed_mut() {
                                                     s.pedigree = pedigree.clone();
+
+                                                    if let Some(sg) = s
+                                                        .pedigree
+                                                        .last_mut()
+                                                        .filter(|sg| sg.id == *owner)
+                                                    {
+                                                        sg.generations += 1;
+                                                    } else {
+                                                        s.pedigree.push(
+                                                            hacksteader::SeedGrower::new(
+                                                                owner.clone(),
+                                                                1,
+                                                            ),
+                                                        )
+                                                    }
                                                 }
                                                 p
                                             })
@@ -2690,20 +2864,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                             ]));
                         }
                     }
-
-                    if elapsed > 0 {
-                        profile.last_farm += Duration::from_millis(
-                            (FARM_CYCLE_MILLIS as u128 * boosted_elapsed)
-                                .try_into()
-                                .unwrap_or_else(|e| {
-                                    error!(
-                                        "too many farm cycle millis * elapsed[{}]: {}",
-                                        elapsed, e
-                                    );
-                                    0
-                                }),
-                        );
-                    }
                 }
 
                 let _ = stream::iter(
@@ -2725,6 +2885,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }))
                         .chain(possessions.iter().map(|p| rusoto_dynamodb::WriteRequest {
                             put_request: Some(rusoto_dynamodb::PutRequest { item: p.item() }),
+                            ..Default::default()
+                        }))
+                        .chain(deletions.into_iter().map(|key| rusoto_dynamodb::WriteRequest {
+                            delete_request: Some(rusoto_dynamodb::DeleteRequest { key: key.into_item() }),
                             ..Default::default()
                         }))
                         .collect::<Vec<_>>()

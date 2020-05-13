@@ -62,7 +62,7 @@
                 "application_effect": {
                     "TimeIncrease": {
                         "extra_cycles": 50000,
-                        "duration_cycles": 12
+                        "duration_cycles": 36
                     }
                 }
             }

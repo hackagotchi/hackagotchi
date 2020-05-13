@@ -29,7 +29,10 @@ impl Config {
             .find(|x| name.as_ref() == x.name)
             .ok_or(ConfigError::UnknownArchetypeName(name.as_ref().to_string()))
     }
-    pub fn find_plant_handle<S: AsRef<str>>(&self, name: &S) -> Result<ArchetypeHandle, ConfigError> {
+    pub fn find_plant_handle<S: AsRef<str>>(
+        &self,
+        name: &S,
+    ) -> Result<ArchetypeHandle, ConfigError> {
         self.plant_archetypes
             .iter()
             .position(|x| name.as_ref() == x.name)
@@ -169,6 +172,7 @@ pub type PlantAdvancement = Advancement<PlantAdvancementSum>;
 pub struct Recipe<Handle> {
     pub needs: Vec<(usize, Handle)>,
     pub makes: Handle,
+    pub time: f32,
 }
 impl Recipe<ArchetypeHandle> {
     pub fn satisfies(&self, inv: &[super::hacksteader::Possession]) -> bool {
@@ -185,7 +189,11 @@ impl Recipe<ArchetypeHandle> {
             .map(|(n, x)| Some((n, CONFIG.possession_archetypes.get(x)?)))
             .collect::<Option<Vec<(_, &Archetype)>>>()?;
 
-        Some(Recipe { makes, needs })
+        Some(Recipe {
+            makes,
+            needs,
+            time: self.time,
+        })
     }
 }
 
@@ -269,6 +277,7 @@ impl AdvancementSum for PlantAdvancementSum {
                                     .iter()
                                     .map(|(c, s)| Ok((*c, CONFIG.find_possession_handle(s)?)))
                                     .collect::<Result<Vec<_>, ConfigError>>()?,
+                                time: r.time,
                             })
                         })
                         .collect::<Result<Vec<_>, ConfigError>>()
@@ -426,7 +435,7 @@ fn archetype_name_matches() {
                     }
                 }
                 Craft(recipes) => {
-                    for Recipe { makes, needs } in recipes.iter() {
+                    for Recipe { makes, needs, .. } in recipes.iter() {
                         assert!(
                             CONFIG.find_possession(makes).is_ok(),
                             "Crafting advancement {:?} for plant {:?} produces unknown resource {:?}",
