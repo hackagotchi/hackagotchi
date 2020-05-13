@@ -115,9 +115,15 @@ pub async fn get_possession(db: &DynamoDbClient, key: Key) -> Result<Possession,
     .await
     .map_err(|e| format!("couldn't read {:?} from db to get possession: {}", key, e))
     .and_then(|x| {
-        match Possession::from_item(&x.item.ok_or_else(|| format!("no item at {:?} to get possession for", key))?) {
+        match Possession::from_item(
+            &x.item
+                .ok_or_else(|| format!("no item at {:?} to get possession for", key))?,
+        ) {
             Ok(p) => Ok(p),
-            Err(e) => Err(format!("couldn't parse possession to get possession: {}", e)),
+            Err(e) => Err(format!(
+                "couldn't parse possession to get possession: {}",
+                e
+            )),
         }
     })
 }
@@ -354,9 +360,17 @@ impl Tile {
 }
 
 #[derive(Debug, Clone)]
+pub struct Craft {
+    pub until_finish: f32,
+    pub total_cycles: f32,
+    pub makes: ArchetypeHandle,
+}
+
+#[derive(Debug, Clone)]
 pub struct Plant {
     pub xp: u64,
     pub until_yield: f32,
+    pub craft: Option<Craft>,
     pub pedigree: Vec<SeedGrower>,
     pub archetype_handle: ArchetypeHandle,
 }
@@ -371,14 +385,83 @@ impl std::ops::Deref for Plant {
             .expect("invalid archetype handle")
     }
 }
+impl Craft {
+    pub fn from_av(av: &AttributeValue) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        let m = av.m.as_ref().ok_or(WrongType)?;
+
+        Ok(Self {
+            until_finish: m
+                .get("until_finish")
+                .ok_or(MissingField("until_finish"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("until_finish"))?
+                .parse()
+                .map_err(|e| FloatFieldParse("until_finish", e))?,
+            total_cycles: m
+                .get("total_cycles")
+                .ok_or(MissingField("total_cycles"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("total_cycles"))?
+                .parse()
+                .map_err(|e| FloatFieldParse("total_cycles", e))?,
+            makes: m
+                .get("makes")
+                .ok_or(MissingField("makes"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("makes"))?
+                .parse()
+                .map_err(|e| IntFieldParse("makes", e))?,
+        })
+    }
+
+    pub fn into_av(self) -> AttributeValue {
+        AttributeValue {
+            m: Some(
+                [
+                    (
+                        "until_finish".to_string(),
+                        AttributeValue {
+                            n: Some(self.until_finish.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "total_cycles".to_string(),
+                        AttributeValue {
+                            n: Some(self.total_cycles.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "makes".to_string(),
+                        AttributeValue {
+                            n: Some(self.makes.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+            ),
+            ..Default::default()
+        }
+    }
+}
 
 impl Plant {
     pub fn from_seed(seed: Possessed<Seed>) -> Self {
         let mut s = Self {
             xp: 0,
             until_yield: 0.0,
+            craft: None,
             archetype_handle: CONFIG.find_plant_handle(&seed.inner.grows_into).unwrap(),
-            pedigree: seed.inner.pedigree
+            pedigree: seed.inner.pedigree,
         };
         s.until_yield = s.base_yield_duration;
         s
@@ -431,6 +514,10 @@ impl Plant {
                 .ok_or(WronglyTypedField("archetype_handle"))?
                 .parse()
                 .map_err(|e| IntFieldParse("archetype_handle", e))?,
+            craft: match m.get("craft") {
+                Some(c) => Some(Craft::from_av(c)?),
+                None => None,
+            },
             pedigree: m
                 .get("pedigree")
                 .ok_or(MissingField("pedigree"))?
@@ -448,14 +535,14 @@ impl Plant {
                     };
                     None
                 })
-                .collect()
+                .collect(),
         })
     }
 
     pub fn into_av(self) -> AttributeValue {
         AttributeValue {
-            m: Some(
-                [
+            m: Some({
+                let mut attrs: Item = [
                     (
                         "xp".to_string(),
                         AttributeValue {
@@ -483,12 +570,18 @@ impl Plant {
                             l: Some(self.pedigree.iter().cloned().map(|sg| sg.into()).collect()),
                             ..Default::default()
                         },
-                    )
+                    ),
                 ]
                 .iter()
                 .cloned()
-                .collect(),
-            ),
+                .collect();
+
+                if let Some(craft) = self.craft {
+                    attrs.insert("craft".to_string(), craft.into_av());
+                }
+
+                attrs
+            }),
             ..Default::default()
         }
     }
@@ -650,9 +743,11 @@ impl Hacksteader {
             })
             .await
         {
-            Ok(rusoto_dynamodb::DeleteItemOutput { attributes: Some(item), .. }) => {
-                Possession::from_item(&item).map_err(|e| format!("couldn't parse value returned from delete: {}", e))
-            }
+            Ok(rusoto_dynamodb::DeleteItemOutput {
+                attributes: Some(item),
+                ..
+            }) => Possession::from_item(&item)
+                .map_err(|e| format!("couldn't parse value returned from delete: {}", e)),
             Err(e) => Err(format!("couldn't delete in db: {}", e)),
             _ => Err(format!("no attributes returned!")),
         }
@@ -1178,6 +1273,10 @@ pub struct SeedGrower {
     pub generations: u64,
 }
 impl SeedGrower {
+    pub fn new(id: String, generations: u64) -> Self {
+        SeedGrower { id, generations }
+    }
+
     fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
         use AttributeParseError::*;
 
@@ -1272,6 +1371,12 @@ impl Owner {
             acquisition: Acquisition::Farmed,
         }
     }
+    pub fn crafter(id: String) -> Self {
+        Self {
+            id,
+            acquisition: Acquisition::Crafted,
+        }
+    }
     fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
         use AttributeParseError::*;
 
@@ -1337,6 +1442,7 @@ pub enum Acquisition {
     Trade,
     Purchase { price: u64 },
     Farmed,
+    Crafted,
 }
 impl Acquisition {
     fn from_item(item: &Item) -> Result<Self, AttributeParseError> {
@@ -1352,6 +1458,7 @@ impl Acquisition {
         match kind.as_str() {
             "Trade" => Ok(Acquisition::Trade),
             "Farmed" => Ok(Acquisition::Farmed),
+            "Crafted" => Ok(Acquisition::Crafted),
             "Purchase" => Ok(Acquisition::Purchase {
                 price: item
                     .get("price")
@@ -1374,6 +1481,7 @@ impl fmt::Display for Acquisition {
         match self {
             Acquisition::Trade => write!(f, "Trade"),
             Acquisition::Farmed => write!(f, "Farmed"),
+            Acquisition::Crafted => write!(f, "Crafted"),
             Acquisition::Purchase { price } => write!(f, "Purchase({}gp)", price),
         }
     }
@@ -1382,7 +1490,7 @@ impl Into<AttributeValue> for Acquisition {
     fn into(self) -> AttributeValue {
         AttributeValue {
             m: match self {
-                Acquisition::Trade | Acquisition::Farmed => Some(
+                Acquisition::Trade | Acquisition::Farmed | Acquisition::Crafted => Some(
                     [(
                         "type".to_string(),
                         AttributeValue {
