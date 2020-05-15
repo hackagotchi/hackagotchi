@@ -431,7 +431,7 @@
                     "xp": 9600,
                     "title": "Cylli Me",
                     "description": "This plant's antics lighten the burden of neighboring plants hard work in the field all day. They even allow them to work 1.3 times faster.",
-                    "achiever_title": " Campfire Coffea Cyl",
+                    "achiever_title": "Campfire Coffea Cyl",
                     "art": "coffea_cyl_teen",
                     "kind": {
                         "NeighborYieldSpeed": 1.3
