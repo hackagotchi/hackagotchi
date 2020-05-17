@@ -400,9 +400,10 @@ fn hackstead_blocks(
     // TODO: with_capacity optimization
     let mut blocks: Vec<Value> = Vec::new();
 
+    let neighbor_bonuses = hs.neighbor_bonuses();
     let Hacksteader {
         profile,
-        inventory,
+        mut inventory,
         land,
         user_id,
         gotchis,
@@ -448,9 +449,15 @@ fn hackstead_blocks(
 
 
     blocks.push(json!({ "type": "divider" }));
+    let tiles_owned = land.len();
     for tile in land.into_iter() {
         if let Some(p) = tile.plant.as_ref() {
-            let sum = p.advancements.sum(p.xp);
+            let neighbor_bonuses = neighbor_bonuses
+                .iter()
+                .filter(|(from, ah, _)| *from != tile.id && *ah == p.archetype_handle)
+                .map(|(_, _, (bonus, _))| bonus);
+            let sum = p.advancements.sum(p.xp, neighbor_bonuses);
+            let unboosted_sum = p.advancements.sum(p.xp, std::iter::empty());
             let ca = p.current_advancement();
 
             blocks.push(json!({
@@ -465,7 +472,7 @@ fn hackstead_blocks(
                         p.xp
                     ));
                     if let Some(na) = p.next_advancement() {
-                        let (have, need) = (p.xp - sum.xp, na.xp);
+                        let (have, need) = (p.xp - unboosted_sum.xp, na.xp);
                         s.push_str(&format!(
                             "Next: *{}*\n{}  {}xp to go\n_{}_",
                             na.title,
@@ -493,7 +500,7 @@ fn hackstead_blocks(
                     "accessory": {
                         "type": "button",
                         "text": plain_text("Yield Stats"),
-                        "value": serde_json::to_string(&(p.xp, p.archetype_handle)).unwrap(),
+                        "value": serde_json::to_string(&(user_id.to_string(), tile.id)).unwrap(),
                         "action_id": "yield_stats",
                     }
                 }));
@@ -555,7 +562,7 @@ fn hackstead_blocks(
                     .cloned()
                     .filter_map(|x| x.try_into().ok())
                     .filter(|x: &Possessed<hacksteader::Keepsake>| {
-                        x.inner.application_effect.is_some()
+                        x.inner.item_application_effect.is_some()
                     })
                     .collect();
 
@@ -597,7 +604,7 @@ fn hackstead_blocks(
                             "type": "button",
                             "text": plain_text("Plant Seed"),
                             "style": "primary",
-                            "value": serde_json::to_string(&(tile.id.to_simple().to_string(), seeds)).unwrap(),
+                            "value": tile.id.to_simple().to_string(),
                             "action_id": "seed_plant",
                         }],
                     })
@@ -606,6 +613,52 @@ fn hackstead_blocks(
                 });
             }
         }
+    }
+
+    inventory.sort_unstable_by(|a, b|{
+        let l = a
+            .kind
+            .keepsake()
+            .and_then(|k| k.unlocks_land.as_ref())
+            .map(|lu| lu.requires_xp);
+        let r = b
+            .kind
+            .keepsake()
+            .and_then(|k| k.unlocks_land.as_ref())
+            .map(|lu| lu.requires_xp);
+        match (l, r) {
+            (Some(true), Some(false)) => std::cmp::Ordering::Less,
+            (Some(false), Some(true)) => std::cmp::Ordering::Greater,
+            _ => std::cmp::Ordering::Equal,
+        }
+    });
+    if let Some(land_deed) = inventory.iter().find_map(|possession| {
+        possession
+            .kind
+            .keepsake()?
+            .unlocks_land
+            .as_ref()
+            .filter(|cert| {
+                if cert.requires_xp {
+                    tiles_owned < hs_adv_sum.land.try_into().unwrap()
+                } else {
+                    true
+                }
+            })
+            .map(|_| possession)
+    }) {
+        blocks.push(json!({ "type": "divider" }));
+
+        blocks.push(json!({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": plain_text("Redeem Land Deed"),
+                "style": "primary",
+                "value": land_deed.id.to_simple().to_string(),
+                "action_id": "unlock_land",
+            }],
+        }));
     }
 
     blocks.push(json!({ "type": "divider" }));
@@ -840,6 +893,7 @@ async fn hackmarket_blocks(cat: Category) -> Vec<Value> {
         blocks.push(json!({ "type": "divider" }));
     }
 
+    blocks.truncate(100);
     blocks
 }
 
@@ -865,12 +919,12 @@ async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value>
             "gotchi" | "g" => Category::Gotchi,
             _ => Category::Misc,
         }).await,
-        "response_type": "in_channel",
     }))
 }
 
 #[post("/hackstead", data = "<slash_command>")]
-async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
+async fn hackstead<'a>(
+slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     debug!("{:#?}", slash_command);
 
     lazy_static::lazy_static! {
@@ -1454,9 +1508,36 @@ async fn action_endpoint(
             .launch()
             .await?
         }
+        "unlock_land" => {
+            // id of the item which allowed them to unlock this land
+            let cert_id: uuid::Uuid = uuid::Uuid::parse_str(&action.value)
+                .map_err(|e| {
+                    let a = format!("couldn't parse land cert id: {}", e);
+                    error!("{}", a);
+                    a
+                })?;
+
+            to_farming
+                .send(FarmingInputEvent::RedeemLandCert(cert_id, i.user.id.clone()))
+                .unwrap();
+
+            json!({})
+        }
         "seed_plant" => {
-            let (tile_id, seeds): (uuid::Uuid, Vec<Possessed<hacksteader::Seed>>) =
-                serde_json::from_str(&action.value).unwrap();
+            let tile_id: uuid::Uuid = uuid::Uuid::parse_str(&action.value).unwrap();
+            let hs = match Hacksteader::from_db(&dyn_db(), i.user.id.clone()).await {
+                Ok(hs) => hs,
+                Err(e) => {
+                    let a = format!("error fetching user for seed plant: {}", e);
+                    error!("{}", a);
+                    return Err(a)
+                }
+            };
+            let seeds: Vec<Possessed<hacksteader::Seed>> = hs.inventory
+                .iter()
+                .cloned()
+                .filter_map(|p| p.try_into().ok())
+                .collect();
 
             Modal {
                 method: "open".to_string(),
@@ -1521,9 +1602,7 @@ async fn action_endpoint(
                 .send(FarmingInputEvent::BeginCraft { tile_id, recipe })
                 .expect("couldn't send to farming");
 
-            json!({
-                "response_action": "clear",
-            })
+            json!({})
         }
         "crafting" => {
             let (tile_id, recipes): (
@@ -1636,14 +1715,29 @@ async fn action_endpoint(
         }
         "yield_stats" => {
             use config::PlantAdvancementKind::*;
-            let (xp, ah): (u64, config::ArchetypeHandle) =
+            let (user_id, plant_id): (String, uuid::Uuid) =
                 serde_json::from_str(&action.value).unwrap();
-            let arch = config::CONFIG
-                .plant_archetypes
-                .get(ah)
-                .ok_or_else(|| format!("invalid archetype handle: {}", ah))?;
-            let sum = arch.advancements.sum(xp);
-            let yield_farm_cycles = arch.base_yield_duration / sum.yield_speed_multiplier;
+
+            let hs = Hacksteader::from_db(&dyn_db(), user_id.to_string()).await?;
+            let plant = hs
+                .land
+                .iter()
+                .find_map(|tile| tile.plant.as_ref().filter(|_p| tile.id == plant_id))
+                .ok_or_else(|| format!("no such plant!"))?;
+            let all_nb = hs.neighbor_bonuses();
+            let neighbor_bonuses = dbg!(all_nb
+                .iter()
+                .filter(|(from, ah, _)| *from != plant_id && *ah == plant.archetype_handle)
+                .map(|(_, _, (bonus, _))| bonus)
+                .collect::<Vec<_>>());
+
+            let advancements = plant
+                .advancements
+                .unlocked(plant.xp)
+                .chain(neighbor_bonuses.iter().copied())
+                .collect::<Vec<_>>();
+            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter().copied());
+            let yield_farm_cycles = plant.base_yield_duration / sum.yield_speed_multiplier;
 
             let mut blocks = vec![];
 
@@ -1659,10 +1753,20 @@ async fn action_endpoint(
                     sum.yield_speed_multiplier
                 )),
             }));
-            for adv in arch.advancements.unlocked(xp) {
-                match adv.kind {
+            for adv in advancements.iter() {
+                match &adv.kind {
                     YieldSpeed(s) => {
                         blocks.push(comment(format!("_{}_: *x{}* speed boost", adv.title, s)));
+                    }
+                    Neighbor(s) => match **s {
+                        YieldSpeed(s) => {
+                            blocks.push(comment(format!(
+                                "_{}_: *x{}* speed boost _(from neighbor)_",
+                                adv.title,
+                                s
+                            )));
+                        }
+                        _ => {}
                     }
                     _ => {}
                 }
@@ -1675,10 +1779,20 @@ async fn action_endpoint(
                     sum.yield_size_multiplier,
                 ))
             }));
-            for adv in arch.advancements.unlocked(xp) {
-                match adv.kind {
+            for adv in advancements.iter() {
+                match &adv.kind {
                     YieldSize(x) => {
                         blocks.push(comment(format!("_{}_: *x{}* size boost", adv.title, x)));
+                    }
+                    Neighbor(s) => match **s {
+                        YieldSize(s) => {
+                            blocks.push(comment(format!(
+                                "_{}_: *x{}* size boost _(from neighbor)_",
+                                adv.title,
+                                s
+                            )));
+                        }
+                        _ => {}
                     }
                     _ => {}
                 }
@@ -1749,7 +1863,7 @@ async fn action_endpoint(
                             .filter_map(|i| {
                                 Some(json!({
                                     "text": plain_text(format!("{} {}", emojify(&i.name), i.name)),
-                                    "description": plain_text(match i.inner.application_effect.as_ref()? {
+                                    "description": plain_text(match i.inner.item_application_effect.as_ref()? {
                                         TimeIncrease { extra_cycles, duration_cycles } => format!(
                                             "~{} hours pass in {} minutes",
                                             extra_cycles / FARM_CYCLES_PER_MIN / 60,
@@ -2007,11 +2121,13 @@ async fn event(
                 }
                 Some(_) => banker::pay(
                     possession.steader.clone(),
-                    price,
+                    price / 20,
                     format!("the {} you tried to sell is already up for sale", name)
                 )
                 .await
             }?;
+
+            //banker::balance().await?;
         } else if let Some(Sale {
             id,
             category,
@@ -2118,8 +2234,6 @@ async fn event(
                 a
             })?;
         }
-
-        banker::balance().await?;
     }
     if let Some(balance) = BALANCE_REPORT
         .captures(&r.text)
@@ -2409,6 +2523,7 @@ async fn steadercount() -> Result<String, String> {
 
 pub enum FarmingInputEvent {
     ActivateUser(String),
+    RedeemLandCert(uuid::Uuid, String),
     ApplyItem(uuid::Uuid, config::ArchetypeHandle),
     PlantSeed(uuid::Uuid, hacksteader::Plant),
     BeginCraft {
@@ -2450,6 +2565,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         let mut item_effects: HashMap<uuid::Uuid, ItemEffect> = HashMap::new();
         let mut plant_queue: HashMap<uuid::Uuid, hacksteader::Plant> = HashMap::new();
         let mut craft_queue: HashMap<uuid::Uuid, config::Recipe<_>> = HashMap::new();
+        let mut land_cert_queue: HashMap<String, uuid::Uuid> = HashMap::new();
 
         async move {
             use futures::stream::{self, StreamExt, TryStreamExt};
@@ -2479,7 +2595,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 .kind
                                 .keepsake()
                                 .expect("can only apply keepsakes")
-                                .application_effect
+                                .item_application_effect
                                 .clone()
                                 .expect("keepsake has no application effect");
 
@@ -2494,6 +2610,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                         PlantSeed(tile_id, plant) => {
                             plant_queue.insert(tile_id, plant);
+                        }
+                        RedeemLandCert(cert_id, user_id) => {
+                            land_cert_queue.insert(user_id, cert_id);
                         }
                         BeginCraft { tile_id, recipe } => {
                             craft_queue.insert(tile_id, recipe);
@@ -2510,7 +2629,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 let db = dyn_db();
 
                 let mut deletions = vec![];
+                let mut clear_plants =  vec![];
                 let mut possessions = vec![];
+                let mut new_tiles = vec![];
                 let mut dms: Vec<(String, [Value; 2])> = Vec::new();
 
                 let mut hacksteaders: Vec<Hacksteader> = match stream::iter(active_users.clone())
@@ -2526,6 +2647,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     }
                 };
 
+                // Give away requested land
+                for hs in hacksteaders.iter_mut() {
+                    if let Some(cert_id) = land_cert_queue.remove(&hs.user_id) {
+                        deletions.push(Key::misc(cert_id));
+                        let new_tile = hacksteader::Tile::new(hs.user_id.clone());
+                        hs.land.push(new_tile.clone());
+                        new_tiles.push(new_tile.clone());
+                    }
+                }
+
+                // Launch requested crafts
                 for Hacksteader {
                     land, inventory, ..
                 } in hacksteaders.iter_mut()
@@ -2558,6 +2690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                     until_finish: recipe.time,
                                     total_cycles: recipe.time,
                                     makes: recipe.makes,
+                                    destroys_plant: recipe.destroys_plant
                                 });
                             } else {
                                 dms.push((
@@ -2576,6 +2709,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 let mut profiles: HashMap<String, Profile> = hacksteaders
                     .iter()
                     .map(|hs| (hs.user_id.clone(), hs.profile.clone()))
+                    .collect();
+
+                // we only want to update the time on someone's profile once
+                // even though they might have several plants, any of which
+                // might be boosted, so we give them a "plant token" for
+                // each of their plants, and move them forward when they
+                // run out of tokens
+                let mut plant_tokens: HashMap<String, usize> = hacksteaders
+                    .iter()
+                    .map(|hs| (
+                        hs.user_id.clone(),
+                        hs.land.iter().filter_map(|t| t.plant.as_ref()).count()
+                    ))
+                    .collect();
+
+                // same goes with the neighbor bonuses for each hackstead
+                let neighbor_bonuses: HashMap<String, _> = hacksteaders
+                    .iter()
+                    .map(|hs| (hs.user_id.clone(), hs.neighbor_bonuses()))
                     .collect();
 
                 // we can only farm on tiles with plants,
@@ -2598,6 +2750,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     })
                     .collect();
 
+                // remove unactive users
                 for ((_, profile), (user, fresh)) in
                     profiles.iter_mut().zip(active_users.clone().into_iter())
                 {
@@ -2617,6 +2770,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     }
                 }
 
+                // game tick loop:
+                // this is where we go through and we increment each xp/craft/yield
                 for (plant, tile) in tiles.iter_mut() {
                     let mut rng = rand::thread_rng();
 
@@ -2624,12 +2779,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         Some(profile) => profile,
                         None => {
                             error!(
-                                "couldn't get tile[{}]'s steader[{}]'s profile",
+                                concat!(
+                                    "ignoring 1 active user: ",
+                                    "couldn't get tile[{}]'s steader[{}]'s profile",
+                                ),
                                 tile.id, tile.steader
                             );
                             continue;
                         }
                     };
+
+                    let neighbor_bonuses = match neighbor_bonuses.get(&tile.steader) {
+                        Some(bonuses) => bonuses,
+                        None => {
+                            error!(
+                                concat!(
+                                    "ignoring 1 active user: ",
+                                    "couldn't get tile[{}]'s steader[{}]'s neighbor bonuses",
+                                ),
+                                tile.id, tile.steader
+                            );
+                            continue;
+                        }
+                    };
+                    let neighbor_bonuses = neighbor_bonuses
+                        .iter()
+                        .filter(|(from, ah, _)| *from != tile.id && *ah == plant.archetype_handle)
+                        .map(|(_, _, (bonus, _))| bonus)
+                        .collect::<Vec<_>>();
 
                     // elapsed for this plant is the base amount of time plus some extras
                     // in case something is speeding up time for this plant
@@ -2644,17 +2821,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         // would have to be "paid for" later (your farm wouldn't work for however
                         // much time the effect gave you).
                         if elapsed > 0 {
-                            profile.last_farm += Duration::from_millis(
-                                (FARM_CYCLE_MILLIS as u128 * elapsed)
-                                    .try_into()
-                                    .unwrap_or_else(|e| {
-                                        error!(
-                                            "too many farm cycle millis * elapsed[{}]: {}",
-                                            elapsed, e
-                                        );
-                                        0
-                                    }),
-                            );
+                            if let Some(tokens) = plant_tokens.get_mut(&profile.id) {
+                                *tokens = *tokens - 1;
+                                if *tokens == 0 {
+                                    info!("all plants finished for {}", profile.id);
+
+                                    profile.last_farm += Duration::from_millis(
+                                        (FARM_CYCLE_MILLIS as u128 * elapsed)
+                                            .try_into()
+                                            .unwrap_or_else(|e| {
+                                                error!(
+                                                    "too many farm cycle millis * elapsed[{}]: {}",
+                                                    elapsed, e
+                                                );
+                                                0
+                                            }),
+                                    );
+                                }
+                            }
                         }
 
                         if let Some(effect) = item_effects.get(&tile.id).clone() {
@@ -2688,7 +2872,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         boosted_elapsed, profile.id
                     );
                     for _ in 0..boosted_elapsed {
-                        let plant_sum = plant.advancements.sum(plant.xp);
+                        let plant_sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter().copied());
 
                         plant.craft = match plant.craft.take() {
                             Some(mut craft) => {
@@ -2700,6 +2884,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         craft.makes,
                                         hacksteader::Owner::crafter(tile.steader.clone()),
                                     );
+                                    if craft.destroys_plant {
+                                        clear_plants.push(tile.id.clone());
+                                    }
                                     possessions.push(p.clone());
                                     dms.push((
                                         tile.steader.clone(),
@@ -2833,7 +3020,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 comment("EXCITING LEVELING UP NOISES"),
                             ]))
                         }
-                        let profile_sum = profile.advancements.sum(profile.xp);
+                        let profile_sum = profile.advancements.sum(
+                            profile.xp,
+                            std::iter::empty()
+                        );
                         if let Some(advancement) = profile.increment_xp() {
                             dms.push((tile.steader.clone(), [
                                 json!({
@@ -2872,13 +3062,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .map(|(plant, mut tile)| rusoto_dynamodb::WriteRequest {
                             put_request: Some(rusoto_dynamodb::PutRequest {
                                 item: {
-                                    tile.plant = Some(plant);
+                                    tile.plant = if clear_plants.iter().any(|id| *id == tile.id) {
+                                        None
+                                    } else {
+                                        Some(plant)
+                                    };
 
                                     tile.into_av().m.expect("tile attribute should be map")
                                 },
                             }),
                             ..Default::default()
                         })
+                        .chain(
+                            new_tiles
+                                .into_iter()
+                                .map(|t| rusoto_dynamodb::WriteRequest {
+                                    put_request: Some(rusoto_dynamodb::PutRequest {
+                                        item: t
+                                            .into_av()
+                                            .m
+                                            .expect("tile attribute should be map"),
+                                    }),
+                                    ..Default::default()
+                                })
+                        )
                         .chain(profiles.iter().map(|(_, p)| rusoto_dynamodb::WriteRequest {
                             put_request: Some(rusoto_dynamodb::PutRequest { item: p.item() }),
                             ..Default::default()

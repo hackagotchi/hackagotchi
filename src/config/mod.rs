@@ -133,8 +133,13 @@ pub enum ApplicationEffect {
     },
 }
 #[derive(Deserialize, Debug, Clone)]
+pub struct LandUnlock {
+    pub requires_xp: bool
+}
+#[derive(Deserialize, Debug, Clone)]
 pub struct KeepsakeArchetype {
-    pub application_effect: Option<ApplicationEffect>,
+    pub item_application_effect: Option<ApplicationEffect>,
+    pub unlocks_land: Option<LandUnlock>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -172,6 +177,7 @@ pub type PlantAdvancement = Advancement<PlantAdvancementSum>;
 pub struct Recipe<Handle> {
     pub needs: Vec<(usize, Handle)>,
     pub makes: Handle,
+    pub destroys_plant: bool,
     pub time: f32,
 }
 impl Recipe<ArchetypeHandle> {
@@ -193,6 +199,7 @@ impl Recipe<ArchetypeHandle> {
             makes,
             needs,
             time: self.time,
+            destroys_plant: self.destroys_plant
         })
     }
 }
@@ -222,8 +229,7 @@ pub enum PlantAdvancementKind {
     Xp(f32),
     YieldSpeed(f32),
     YieldSize(f32),
-    NeighborYieldSize(f32),
-    NeighborYieldSpeed(f32),
+    Neighbor(Box<PlantAdvancementKind>),
     Yield(Vec<(SpawnRate, String)>),
     Craft(Vec<Recipe<String>>),
 }
@@ -253,12 +259,18 @@ impl AdvancementSum for PlantAdvancementSum {
 
         for k in unlocked.iter() {
             xp += k.xp;
-            match &k.kind {
+
+            // apply neighbor upgrades as if they weren't neighbor upgrades :D
+            let kind = match &k.kind {
+                Neighbor(n) => &**n,
+                other => other,
+            };
+
+            match kind {
                 Xp(multiplier) => xp_multiplier *= multiplier,
                 YieldSpeed(multiplier) => yield_speed_multiplier *= multiplier,
-                NeighborYieldSpeed(..) => {}
+                Neighbor(..) => {}
                 YieldSize(multiplier) => yield_size_multiplier *= multiplier,
-                NeighborYieldSize(..) => {}
                 Yield(resources) => yields.append(
                     &mut resources
                         .iter()
@@ -277,7 +289,9 @@ impl AdvancementSum for PlantAdvancementSum {
                                     .iter()
                                     .map(|(c, s)| Ok((*c, CONFIG.find_possession_handle(s)?)))
                                     .collect::<Result<Vec<_>, ConfigError>>()?,
+                                
                                 time: r.time,
+                                destroys_plant: r.destroys_plant,
                             })
                         })
                         .collect::<Result<Vec<_>, ConfigError>>()
@@ -355,12 +369,22 @@ impl<S: AdvancementSum> AdvancementSet<S> {
             .filter(|&x| self.next(*xp).map(|n| *x != *n).unwrap_or(false))
     }
 
-    pub fn sum(&self, xp: u64) -> S {
-        S::new(&self.unlocked(xp).collect::<Vec<_>>())
+    pub fn sum<'a>(&'a self, xp: u64, extra_advancements: impl Iterator<Item = &'a Advancement<S>>) -> S {
+        S::new(
+            &self
+                .unlocked(xp)
+                .chain(extra_advancements)
+                .collect::<Vec<_>>()
+        )
     }
 
-    pub fn max(&self) -> S {
-        S::new(&self.all().collect::<Vec<_>>())
+    pub fn max<'a>(&'a self, extra_advancements: impl Iterator<Item = &'a Advancement<S>>) -> S {
+        S::new(
+            &self
+                .all()
+                .chain(extra_advancements)
+                .collect::<Vec<_>>()
+        )
     }
 
     pub fn current(&self, xp: u64) -> &Advancement<S> {

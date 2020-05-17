@@ -31,7 +31,7 @@
         "description": "Sparkling, glittery, glowing blue powder that emits high-pitched squeaking noises, especially when excited. Has been known to accelerate time when suspended in the air.",
         "kind": {
             "Keepsake": {
-                "application_effect": {
+                "item_application_effect": {
                     "TimeIncrease": {
                         "extra_cycles": 1500,
                         "duration_cycles": 12
@@ -45,7 +45,7 @@
         "description": "A volatile mixture of two volatile substances! Its powerful time acceleration properties were last recorded in the ancient books of the Brognarks; no one has been able to acquire any of this substance since then.",
         "kind": {
             "Keepsake": {
-                "application_effect": {
+                "item_application_effect": {
                     "TimeIncrease": {
                         "extra_cycles": 15000,
                         "duration_cycles": 12
@@ -59,7 +59,7 @@
         "description": "The rarest, most pure time acceleration substance in the universe ... so rare, even the ancients only alluded to its existence ... said to be able to call forth the ancient worm of time herself ...",
         "kind": {
             "Keepsake": {
-                "application_effect": {
+                "item_application_effect": {
                     "TimeIncrease": {
                         "extra_cycles": 50000,
                         "duration_cycles": 36
@@ -72,14 +72,22 @@
         "name": "Land Deed",
         "description": "Entitles the holder to a new plot of land, if they have the experience to handle it, of course.",
         "kind": {
-            "Keepsake": {}
+            "Keepsake": {
+                "unlocks_land": {
+                    "requires_xp": true
+                }
+            }
         }
     },
     {
         "name": "Land Grant",
         "description": "A much rarer, much more valuable land deed that can grant you land even if you don't have enough experience.",
         "kind": {
-            "Keepsake": {}
+            "Keepsake": {
+                "unlocks_land": {
+                    "requires_xp": true
+                }
+            }
         }
     },
     {

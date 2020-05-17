@@ -42,7 +42,9 @@
                     "achiever_title": "Budding Bractus",
                     "art": "bractus_loaf",
                     "kind": {
-                        "NeighborYieldSize": 1.15
+                        "Neighbor": {
+                            "YieldSize": 1.15
+                        }
                     }
                 },
                 {
@@ -122,7 +124,8 @@
                                     ]
                                 ],
                                 "makes": "bressence",
-                                "time": 240.0
+                                "time": 240.0,
+                                "destroys_plant": false
                             }
                         ]
                     }
@@ -147,7 +150,8 @@
                                     ]
                                 ],
                                 "makes": "Bread Egg",
-                                "time": 720.0
+                                "time": 720.0,
+                                "destroys_plant": true
                             }
                         ]
                     }
@@ -159,7 +163,9 @@
                     "achiever_title": "Breaktus",
                     "art": "bractus_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.15
+                        "Neighbor": {
+                            "YieldSpeed": 1.15
+                        }
                     }
                 },
                 {
@@ -169,7 +175,9 @@
                     "achiever_title": "Breakfastus",
                     "art": "bractus_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.3
+                        "Neighbor": {
+                            "YieldSpeed": 1.3
+                        }
                     }
                 },
                 {
@@ -209,7 +217,9 @@
                     "achiever_title": "Connected Bractus",
                     "art": "bractus_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.2
+                        "Neighbor": {
+                            "YieldSize": 1.2
+                        }
                     }
                 },
                 {
@@ -219,7 +229,9 @@
                     "achiever_title": "Deepstate Bractus",
                     "art": "bractus_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.35
+                        "Neighbor": {
+                            "YieldSize": 1.35
+                        }
                     }
                 },
                 {
@@ -256,7 +268,8 @@
                                     ]
                                 ],
                                 "makes": "Kingpin",
-                                "time": 17280.0
+                                "time": 17280.0,
+                                "destroys_plant": true
                             }
                         ]
                     }
@@ -307,7 +320,9 @@
                     "achiever_title": "Not-Totally-Blue Orange Coffea Cyl",
                     "art": "coffea_cyl_baby",
                     "kind": {
-                        "NeighborYieldSize": 1.15
+                        "Neighbor": {
+                            "YieldSize": 1.15
+                        }
                     }
                 },
                 {
@@ -387,7 +402,8 @@
                                     ]
                                 ],
                                 "makes": "crystcyl",
-                                "time": 240.0
+                                "time": 240.0,
+                                "destroys_plant": false
                             }
                         ]
                     }
@@ -412,7 +428,8 @@
                                     ]
                                 ],
                                 "makes": "Cyl Egg",
-                                "time": 720.0
+                                "time": 720.0,
+                                "destroys_plant": true
                             }
                         ]
                     }
@@ -424,7 +441,9 @@
                     "achiever_title": "Hearth-to-Heart Coffea Cyl",
                     "art": "coffea_cyl_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.15
+                        "Neighbor": {
+                            "YieldSpeed": 1.15
+                        }
                     }
                 },
                 {
@@ -434,7 +453,9 @@
                     "achiever_title": " Campfire Coffea Cyl",
                     "art": "coffea_cyl_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.3
+                        "Neighbor": {
+                            "YieldSpeed": 1.3
+                        }
                     }
                 },
                 {
@@ -474,7 +495,9 @@
                     "achiever_title": "Brewmaster Coffea Cyl",
                     "art": "coffea_cyl_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.2
+                        "Neighbor": {
+                            "YieldSize": 1.2
+                        }
                     }
                 },
                 {
@@ -484,7 +507,9 @@
                     "achiever_title": "Sunset Coffea Cyl",
                     "art": "coffea_cyl_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.35
+                        "Neighbor": {
+                            "YieldSize": 1.35
+                        }
                     }
                 },
                 {
@@ -521,7 +546,8 @@
                                     ]
                                 ],
                                 "makes": "Cytrus Staff",
-                                "time": 17280.0
+                                "time": 17280.0,
+                                "destroys_plant": true
                             }
                         ]
                     }
@@ -572,7 +598,9 @@
                     "achiever_title": "Quacking Vine",
                     "art": "hacker_vibes_vine_baby",
                     "kind": {
-                        "NeighborYieldSize": 1.15
+                        "Neighbor": {
+                            "YieldSize": 1.15
+                        }
                     }
                 },
                 {
@@ -652,7 +680,8 @@
                                     ]
                                 ],
                                 "makes": "hacksprit",
-                                "time": 240.0
+                                "time": 240.0,
+                                "destroys_plant": false
                             }
                         ]
                     }
@@ -677,7 +706,8 @@
                                     ]
                                 ],
                                 "makes": "Hacker Egg",
-                                "time": 720.0
+                                "time": 720.0,
+                                "destroys_plant": true
                             }
                         ]
                     }
@@ -689,7 +719,9 @@
                     "achiever_title": "Blossoming Vibes Vine",
                     "art": "hacker_vibes_vine_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.15
+                        "Neighbor": {
+                            "YieldSpeed": 1.15
+                        }
                     }
                 },
                 {
@@ -699,7 +731,9 @@
                     "achiever_title": "Medium Vine",
                     "art": "hacker_vibes_vine_teen",
                     "kind": {
-                        "NeighborYieldSpeed": 1.3
+                        "Neighbor": {
+                            "YieldSpeed": 1.3
+                        }
                     }
                 },
                 {
@@ -739,7 +773,9 @@
                     "achiever_title": "Deepstate Vibes Vine",
                     "art": "hacker_vibes_vine_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.2
+                        "Neighbor": {
+                            "YieldSize": 1.2
+                        }
                     }
                 },
                 {
@@ -749,7 +785,9 @@
                     "achiever_title": "Authoritative Vibes Vine",
                     "art": "hacker_vibes_vine_grown",
                     "kind": {
-                        "NeighborYieldSize": 1.35
+                        "Neighbor": {
+                            "YieldSize": 1.35
+                        }
                     }
                 },
                 {
@@ -786,7 +824,8 @@
                                     ]
                                 ],
                                 "makes": "Jungleboard",
-                                "time": 17280.0
+                                "time": 17280.0,
+                                "destroys_plant": true
                             }
                         ]
                     }

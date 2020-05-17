@@ -363,6 +363,7 @@ impl Tile {
 pub struct Craft {
     pub until_finish: f32,
     pub total_cycles: f32,
+    pub destroys_plant: bool,
     pub makes: ArchetypeHandle,
 }
 
@@ -416,6 +417,10 @@ impl Craft {
                 .ok_or(WronglyTypedField("makes"))?
                 .parse()
                 .map_err(|e| IntFieldParse("makes", e))?,
+            destroys_plant: match m.get("destroys_plant") {
+                None => false,
+                Some(x) => x.bool.ok_or(WronglyTypedField("destroys_plant"))?,
+            }
         })
     }
 
@@ -441,6 +446,13 @@ impl Craft {
                         "makes".to_string(),
                         AttributeValue {
                             n: Some(self.makes.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "destroys_plant".to_string(),
+                        AttributeValue {
+                            bool: Some(self.destroys_plant),
                             ..Default::default()
                         },
                     ),
@@ -699,6 +711,36 @@ impl Hacksteader {
         .map_err(|e| format!("couldn't add profile: {}", e))?;
 
         Ok(())
+    }
+
+    pub fn neighbor_bonuses(&self) -> Vec<(
+        uuid::Uuid,
+        config::ArchetypeHandle,
+        (config::PlantAdvancement, config::PlantAdvancementKind)
+    )> {
+        use config::PlantAdvancementKind::*;
+
+        self
+            .land
+            .iter()
+            .filter_map(|tile| Some((
+                tile.id,
+                tile.plant.as_ref()?,
+            )))
+            .flat_map(|(steader, plant)| {
+                plant
+                    .advancements
+                    .unlocked(plant.xp)
+                    .filter_map(move |adv| Some((
+                        steader.clone(),
+                        plant.archetype_handle,
+                        match &adv.kind {
+                            Neighbor(a) => Some((adv.clone(), *a.clone())),
+                            _ => None,
+                        }?
+                    )))
+            })
+            .collect()
     }
 
     pub async fn give_possession(
@@ -1821,7 +1863,7 @@ impl Profile {
     }
 
     pub fn advancements_sum(&self) -> config::HacksteadAdvancementSum {
-        self.advancements.sum(self.xp)
+        self.advancements.sum(self.xp, std::iter::empty())
     }
 
     pub fn increment_xp(&mut self) -> Option<&config::HacksteadAdvancement> {
