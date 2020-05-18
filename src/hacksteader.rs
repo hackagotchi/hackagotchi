@@ -420,7 +420,7 @@ impl Craft {
             destroys_plant: match m.get("destroys_plant") {
                 None => false,
                 Some(x) => x.bool.ok_or(WronglyTypedField("destroys_plant"))?,
-            }
+            },
         })
     }
 
@@ -713,32 +713,32 @@ impl Hacksteader {
         Ok(())
     }
 
-    pub fn neighbor_bonuses(&self) -> Vec<(
+    pub fn neighbor_bonuses(
+        &self,
+    ) -> Vec<(
         uuid::Uuid,
         config::ArchetypeHandle,
-        (config::PlantAdvancement, config::PlantAdvancementKind)
+        (config::PlantAdvancement, config::PlantAdvancementKind),
     )> {
         use config::PlantAdvancementKind::*;
 
-        self
-            .land
+        self.land
             .iter()
-            .filter_map(|tile| Some((
-                tile.id,
-                tile.plant.as_ref()?,
-            )))
+            .filter_map(|tile| Some((tile.id, tile.plant.as_ref()?)))
             .flat_map(|(steader, plant)| {
                 plant
                     .advancements
                     .unlocked(plant.xp)
-                    .filter_map(move |adv| Some((
-                        steader.clone(),
-                        plant.archetype_handle,
-                        match &adv.kind {
-                            Neighbor(a) => Some((adv.clone(), *a.clone())),
-                            _ => None,
-                        }?
-                    )))
+                    .filter_map(move |adv| {
+                        Some((
+                            steader.clone(),
+                            plant.archetype_handle,
+                            match &adv.kind {
+                                Neighbor(a) => Some((adv.clone(), *a.clone())),
+                                _ => None,
+                            }?,
+                        ))
+                    })
             })
             .collect()
     }

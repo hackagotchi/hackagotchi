@@ -1,5 +1,6 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
 pub enum ConfigError {
@@ -115,6 +116,10 @@ impl AdvancementSum for HacksteadAdvancementSum {
                 .sum(),
         }
     }
+
+    fn filter_base(_a: &Advancement<Self>) -> bool {
+        true
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -134,7 +139,7 @@ pub enum ApplicationEffect {
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct LandUnlock {
-    pub requires_xp: bool
+    pub requires_xp: bool,
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct KeepsakeArchetype {
@@ -169,6 +174,17 @@ pub struct PlantArchetype {
     pub base_yield_duration: f32,
     pub advancements: AdvancementSet<PlantAdvancementSum>,
 }
+impl Eq for PlantArchetype {}
+impl PartialEq for PlantArchetype {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl Hash for PlantArchetype {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
 pub type PlantAdvancement = Advancement<PlantAdvancementSum>;
 /// Recipe is generic over the way Archetypes are referred to
 /// to make it easy to use Strings in the configs and ArchetypeHandles
@@ -199,7 +215,7 @@ impl Recipe<ArchetypeHandle> {
             makes,
             needs,
             time: self.time,
-            destroys_plant: self.destroys_plant
+            destroys_plant: self.destroys_plant,
         })
     }
 }
@@ -289,7 +305,7 @@ impl AdvancementSum for PlantAdvancementSum {
                                     .iter()
                                     .map(|(c, s)| Ok((*c, CONFIG.find_possession_handle(s)?)))
                                     .collect::<Result<Vec<_>, ConfigError>>()?,
-                                
+
                                 time: r.time,
                                 destroys_plant: r.destroys_plant,
                             })
@@ -322,12 +338,21 @@ impl AdvancementSum for PlantAdvancementSum {
             recipes,
         }
     }
+
+    // ignore your neighbor bonuses you give out
+    fn filter_base(a: &Advancement<Self>) -> bool {
+        match &a.kind {
+            PlantAdvancementKind::Neighbor(..) => false,
+            _ => true,
+        }
+    }
 }
 
 pub trait AdvancementSum: DeserializeOwned + PartialEq + fmt::Debug {
     type Kind: DeserializeOwned + fmt::Debug + Clone + PartialEq;
 
     fn new(unlocked: &[&Advancement<Self>]) -> Self;
+    fn filter_base(a: &Advancement<Self>) -> bool;
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -343,7 +368,7 @@ pub struct Advancement<S: AdvancementSum> {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(bound(deserialize = ""))]
 pub struct AdvancementSet<S: AdvancementSum> {
-    base: Advancement<S>,
+    pub base: Advancement<S>,
     rest: Vec<Advancement<S>>,
 }
 #[allow(dead_code)]
@@ -369,12 +394,17 @@ impl<S: AdvancementSum> AdvancementSet<S> {
             .filter(|&x| self.next(*xp).map(|n| *x != *n).unwrap_or(false))
     }
 
-    pub fn sum<'a>(&'a self, xp: u64, extra_advancements: impl Iterator<Item = &'a Advancement<S>>) -> S {
+    pub fn sum<'a>(
+        &'a self,
+        xp: u64,
+        extra_advancements: impl Iterator<Item = &'a Advancement<S>>,
+    ) -> S {
         S::new(
             &self
                 .unlocked(xp)
+                .filter(|&x| S::filter_base(x))
                 .chain(extra_advancements)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         )
     }
 
@@ -382,8 +412,9 @@ impl<S: AdvancementSum> AdvancementSet<S> {
         S::new(
             &self
                 .all()
+                .filter(|&x| S::filter_base(x))
                 .chain(extra_advancements)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         )
     }
 
