@@ -154,6 +154,13 @@ pub enum ArchetypeKind {
     Keepsake(KeepsakeArchetype),
 }
 impl ArchetypeKind {
+    pub fn category(&self) -> crate::hacksteader::Category {
+        use crate::hacksteader::Category;
+        match self {
+            ArchetypeKind::Gotchi(_) => Category::Gotchi,
+            _ => Category::Misc,
+        }
+    }
     pub fn keepsake(&self) -> Option<&KeepsakeArchetype> {
         match self {
             ArchetypeKind::Keepsake(k) => Some(k),
@@ -406,6 +413,10 @@ impl<S: AdvancementSum> AdvancementSet<S> {
                 .chain(extra_advancements)
                 .collect::<Vec<_>>(),
         )
+    }
+
+    pub fn raw_sum(&self, xp: u64) -> S {
+        S::new(&self.unlocked(xp).collect::<Vec<_>>())
     }
 
     pub fn max<'a>(&'a self, extra_advancements: impl Iterator<Item = &'a Advancement<S>>) -> S {

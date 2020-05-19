@@ -128,6 +128,28 @@ pub async fn get_possession(db: &DynamoDbClient, key: Key) -> Result<Possession,
     })
 }
 
+pub async fn get_tile(db: &DynamoDbClient, id: uuid::Uuid) -> Result<Tile, String> {
+    db.get_item(rusoto_dynamodb::GetItemInput {
+        key: Key::tile(id).into_item(),
+        table_name: TABLE_NAME.to_string(),
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("couldn't read {:?} from db to get tile: {}", id, e))
+    .and_then(|x| {
+        match Tile::from_item(
+            &x.item
+                .ok_or_else(|| format!("no item at {:?} to get possession for", id))?,
+        ) {
+            Ok(p) => Ok(p),
+            Err(e) => Err(format!(
+                "couldn't parse possession to get possession: {}",
+                e
+            )),
+        }
+    })
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttributeParseError {
     IntFieldParse(&'static str, std::num::ParseIntError),
