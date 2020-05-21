@@ -623,7 +623,7 @@ impl Plant {
 
 /// A model for all keys that use uuid:Uuids internally,
 /// essentially all those except Profile keys.
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, Copy)]
 pub struct Key {
     pub category: Category,
     pub id: uuid::Uuid,
@@ -821,11 +821,11 @@ impl Hacksteader {
         db: &DynamoDbClient,
         new_owner: String,
         acquisition: Acquisition,
-        possession: &Possession,
+        key: Key,
     ) -> Result<(), String> {
         db.update_item(rusoto_dynamodb::UpdateItemInput {
             table_name: TABLE_NAME.to_string(),
-            key: possession.key().into_item(),
+            key: key.into_item(),
             update_expression: Some(
                 concat!(
                     "SET ",

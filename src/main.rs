@@ -85,26 +85,24 @@ async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum PossessionOverviewSource {
     Hacksteader(String),
     Market(Category),
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct PossessionOverviewPage {
     source: PossessionOverviewSource,
+    page: usize,
     item_name: String,
     interactivity: Interactivity,
     credentials: Credentials,
 }
 impl PossessionOverviewPage {
-    async fn modal(
-        self,
-        trigger_id: String,
-        private_metadata: String,
-        method: &'static str,
-    ) -> Result<Modal, String> {
+    const PAGE_SIZE: usize = 20;
+
+    async fn modal(self, trigger_id: String, method: &'static str) -> Result<Modal, String> {
         Ok(Modal {
             callback_id: self.callback_id(),
             blocks: self.blocks().await?,
@@ -112,7 +110,7 @@ impl PossessionOverviewPage {
             title: self.item_name,
             method: method.to_string(),
             trigger_id,
-            private_metadata,
+            private_metadata: String::new(),
         })
     }
 
@@ -137,37 +135,43 @@ impl PossessionOverviewPage {
         let Self {
             source,
             item_name,
+            page,
             credentials,
             interactivity,
         } = self;
 
-        let inventory = match source {
+        let inventory: Vec<_> = match source {
             PossessionOverviewSource::Hacksteader(hacksteader) => {
-                let mut hs = Hacksteader::from_db(&dyn_db(), hacksteader.clone()).await?;
-                hs.inventory
+                let hs = Hacksteader::from_db(&dyn_db(), hacksteader.clone()).await?;
+                let mut inv: Vec<_> = hs.inventory.into_iter().filter(|i| i.name == *item_name).collect();
+                inv
                     .sort_unstable_by(|a, b| match (a.sale.as_ref(), b.sale.as_ref()) {
                         (Some(a), Some(b)) => a.price.cmp(&b.price),
                         (Some(_), None) => std::cmp::Ordering::Less,
                         (None, Some(_)) => std::cmp::Ordering::Greater,
                         (None, None) => std::cmp::Ordering::Equal,
                     });
-                hs.inventory
+                inv
             }
             PossessionOverviewSource::Market(cat) => market::market_search(&dyn_db(), *cat)
                 .await
                 .map_err(|e| error!("couldn't search market: {}", e))
                 .unwrap_or_default()
                 .into_iter()
+                .filter(|(_, i)| i.name == *item_name)
                 .map(|(sale, mut possession)| {
                     possession.sale.replace(sale);
                     possession
                 })
                 .collect(),
         };
+        // caching this so I can use it later after .into_iter() is called
+        let inventory_len = inventory.len();
 
-        Ok(inventory
+        let mut blocks = inventory
             .into_iter()
-            .filter(|i| i.name == *item_name)
+            .skip(page * Self::PAGE_SIZE)
+            .take(Self::PAGE_SIZE)
             .map(|possession| {
                 json!({
                     "type": "section",
@@ -209,8 +213,46 @@ impl PossessionOverviewPage {
                     }
                 })
             })
-            .take(100)
-            .collect())
+            .collect::<Vec<_>>();
+
+        let needs_back_page = *page != 0;
+        let needs_next_page = inventory_len > Self::PAGE_SIZE * (page + 1);
+        if needs_back_page || needs_next_page {
+            blocks.push(json!({
+                "type": "actions",
+                "elements": ({
+                    let mut buttons = vec![];
+                    let mut current_page = self.clone();
+
+                    if needs_back_page {
+                        let mut back_page = &mut current_page;
+                        back_page.page = *page - 1;
+                        buttons.push(json!({
+                            "type": "button",
+                            "text": plain_text("Back Page"),
+                            "style": "primary",
+                            "value": serde_json::to_string(back_page).unwrap(),
+                            "action_id": "possession_overview_page"
+                        }));
+                    }
+                    if needs_next_page {
+                        let mut next_page = &mut current_page;
+                        next_page.page = *page + 1;
+                        buttons.push(json!({
+                            "type": "button",
+                            "text": plain_text("Next Page"),
+                            "style": "primary",
+                            "value": serde_json::to_string(next_page).unwrap(),
+                            "action_id": "possession_overview_page"
+                        }));
+                    }
+                     
+                    buttons
+                })
+            }));
+        }
+
+        Ok(blocks)
     }
 }
 
@@ -222,7 +264,7 @@ pub struct PossessionPage {
 }
 
 impl PossessionPage {
-    fn modal(self, trigger_id: String, page_json: String, method: &'static str) -> Modal {
+    fn modal(self, trigger_id: String, method: &'static str) -> Modal {
         Modal {
             callback_id: self.callback_id(),
             blocks: self.blocks(),
@@ -230,17 +272,17 @@ impl PossessionPage {
             title: self.possession.nickname().to_string(),
             method: method.to_string(),
             trigger_id: trigger_id,
-            private_metadata: page_json,
+            private_metadata: serde_json::to_string(&self.possession.key()).unwrap(),
         }
     }
 
-    fn modal_update(self, trigger_id: String, page_json: String, view_id: String) -> ModalUpdate {
+    fn modal_update(self, trigger_id: String, view_id: String) -> ModalUpdate {
         ModalUpdate {
             callback_id: self.callback_id(),
             blocks: self.blocks(),
             submit: self.submit(),
             title: self.possession.nickname().to_string(),
-            private_metadata: page_json,
+            private_metadata: serde_json::to_string(&self.possession.key()).unwrap(),
             trigger_id,
             view_id,
             hash: None,
@@ -762,6 +804,7 @@ fn hackstead_blocks(
                         "text": plain_text(&name),
                         "value": serde_json::to_string(&PossessionOverviewPage {
                             source: PossessionOverviewSource::Hacksteader(user_id.clone()),
+                            page: 0,
                             item_name: name,
                             interactivity,
                             credentials,
@@ -1356,34 +1399,29 @@ async fn action_endpoint(
         debug!("right type!");
         let view = v.get("view").and_then(|view| {
             let parsed_view = serde_json::from_value::<View>(view.clone()).ok()?;
-            let page_json_str = &parsed_view.private_metadata;
-            let page: Option<PossessionPage> = match serde_json::from_str(&page_json_str) {
-                Ok(page) => Some(page),
+            let key_json = &parsed_view.private_metadata;
+            let key: Option<Key> = match serde_json::from_str(&key_json) {
+                Ok(k) => Some(k),
                 Err(e) => {
-                    error!("couldn't parse {}: {}", page_json_str, e);
+                    error!("couldn't parse {}: {}", key_json, e);
                     None
                 }
             };
             Some((
                 parsed_view,
-                page,
+                key,
                 v.get("trigger_id")?.as_str()?,
                 view.get("state").and_then(|s| s.get("values").cloned())?,
                 serde_json::from_value::<User>(v.get("user")?.clone()).ok()?,
             ))
         });
-        if let Some((view, Some(mut page), trigger_id, values, user)) = view {
+        if let Some((view, Some(key), trigger_id, values, user)) = view {
             debug!("view state values: {:#?}", values);
 
             match view.callback_id.as_str() {
                 "sale_removal" => {
                     info!("Revoking sale");
-                    market::take_off_market(
-                        &dyn_db(),
-                        page.possession.kind.category(),
-                        page.possession.id,
-                    )
-                    .await?;
+                    market::take_off_market(&dyn_db(), key).await?;
 
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "clear",
@@ -1391,18 +1429,19 @@ async fn action_endpoint(
                 }
                 "sale_complete" => {
                     info!("Completing sale!");
+                    let possession = hacksteader::get_possession(&dyn_db(), key).await?;
 
-                    if let Some(sale) = page.possession.sale.as_ref() {
+                    if let Some(sale) = possession.sale.as_ref() {
                         banker::invoice(
                             &user.id,
                             sale.price,
                             &format!(
                                 "hackmarket purchase buying {} at {}gp :{}:{} from <@{}>",
-                                page.possession.name,
+                                possession.name,
                                 sale.price,
-                                page.possession.id,
-                                page.possession.kind.category() as u8,
-                                page.possession.steader,
+                                key.id,
+                                key.category as u8,
+                                possession.steader,
                             ),
                         )
                         .await?;
@@ -1424,7 +1463,7 @@ async fn action_endpoint(
                 let db = dyn_db();
                 db.update_item(rusoto_dynamodb::UpdateItemInput {
                     table_name: hacksteader::TABLE_NAME.to_string(),
-                    key: page.possession.key().into_item(),
+                    key: key.into_item(),
                     update_expression: Some("SET nickname = :new_name".to_string()),
                     expression_attribute_values: Some(
                         [(
@@ -1443,24 +1482,32 @@ async fn action_endpoint(
                 .await
                 .map_err(|e| format!("Couldn't change nickname in database: {}", e))?;
 
-                let gotchi = page
-                    .possession
+                // TODO: parse what the above could return
+                let mut possession = hacksteader::get_possession(&db, key).await?;
+
+                let gotchi = possession
                     .kind
                     .gotchi_mut()
                     .ok_or("can only nickname gotchi".to_string())?;
 
                 // update the nickname on the Gotchi,
                 gotchi.nickname = nickname.clone();
-                let page_json = serde_json::to_string(&page).unwrap();
+
+                let page = PossessionPage {
+                    credentials: Credentials::Owner,
+                    interactivity: Interactivity::Write,
+                    possession,
+                };
 
                 // update the page in the background with the new gotchi data
-                page.modal_update(trigger_id.to_string(), page_json, view.root_view_id)
+                page.modal_update(trigger_id.to_string(), view.root_view_id)
                     .launch()
                     .await?;
 
                 // update the home tab
-                // TODO: make this not read from the database
-                update_user_home_tab(user.id.clone()).await?;
+                to_farming
+                    .send(FarmingInputEvent::ActivateUser(user.id.clone()))
+                    .unwrap();
 
                 // this will close the "enter nickname" modal
                 return Ok(ActionResponse::Ok(()));
@@ -1471,15 +1518,17 @@ async fn action_endpoint(
                 .and_then(|x| x.as_str())
                 .and_then(|s| s.parse::<u64>().ok())
             {
+                let possession = hacksteader::get_possession(&dyn_db(), key).await?;
+
                 banker::invoice(
                     &user.id,
                     price / 20_u64,
                     &format!(
                         "hackmarket fees for selling {} at {}gp :{}:{}",
-                        page.possession.name,
+                        possession.name,
                         price,
-                        page.possession.id,
-                        page.possession.kind.category() as u8
+                        possession.id,
+                        possession.kind.category() as u8
                     ),
                 )
                 .await?;
@@ -1511,7 +1560,7 @@ async fn action_endpoint(
                     &dyn_db(),
                     new_owner.clone(),
                     hacksteader::Acquisition::Trade,
-                    &mut page.possession,
+                    key,
                 )
                 .await
                 .map_err(|e| e)?;
@@ -1519,6 +1568,8 @@ async fn action_endpoint(
                 // update the home tab
                 // TODO: make this not read from the database
                 update_user_home_tab(user.id.clone()).await?;
+
+                let possession = hacksteader::get_possession(&dyn_db(), key).await?;
 
                 // DM the new_owner about their new acquisition!
                 dm_blocks(new_owner.clone(), {
@@ -1529,18 +1580,22 @@ async fn action_endpoint(
                             "text": mrkdwn(format!(
                                 "<@{}> has been so kind as to gift you a {:?}, {} _{}_!",
                                 user.id,
-                                page.possession.kind.category(),
-                                emojify(&page.possession.name),
-                                page.possession.nickname()
+                                key.category,
+                                emojify(&possession.name),
+                                possession.nickname()
                             ))
                         }),
                         json!({ "type": "divider" }),
                     ];
-                    page.interactivity = Interactivity::Read;
+                    let page = PossessionPage {
+                        interactivity: Interactivity::Read,
+                        credentials: Credentials::Owner,
+                        possession,
+                    };
                     blocks.append(&mut page.blocks());
                     blocks.push(json!({ "type": "divider" }));
                     blocks.push(comment(format!(
-                        "Manage all of your Hackagotchi at your <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>",
+                        "Manage all of your possessions like this one at your <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>",
                         *APP_ID,
                     )));
                     blocks
@@ -1703,12 +1758,14 @@ async fn action_endpoint(
             .await?
         }
         "possession_give" => {
-            let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
-            let page: PossessionPage = serde_json::from_str(&page_json).map_err(|e| {
-                let a = format!("couldn't parse {}: {}", page_json, e);
+            let key_json = i.view.ok_or("no view!".to_string())?.private_metadata;
+            let key: Key = serde_json::from_str(&key_json).map_err(|e| {
+                let a = format!("couldn't parse {}: {}", key_json, e);
                 error!("{}", a);
                 a
             })?;
+
+            let possession = hacksteader::get_possession(&dyn_db(), key).await?;
 
             Modal {
                 method: "push".to_string(),
@@ -1725,14 +1782,14 @@ async fn action_endpoint(
                         "placeholder": plain_text("Who Really Gets your Gotchi?"),
                         "initial_user": ({
                             let s = &config::CONFIG.special_users;
-                            &s.get(page_json.len() % s.len()).unwrap_or(&*ID)
+                            &s.get(key_json.len() % s.len()).unwrap_or(&*ID)
                         }),
                         "confirm": {
                             "title": plain_text("You sure?"),
                             "text": mrkdwn(format!(
                                 "Are you sure you want to give away {} _{}_? You might not get them back. :frowning:",
-                                emojify(&page.possession.name),
-                                page.possession.nickname()
+                                emojify(&possession.name),
+                                possession.nickname()
                             )),
                             "confirm": plain_text("Give!"),
                             "deny": plain_text("No!"),
@@ -1740,7 +1797,7 @@ async fn action_endpoint(
                         }
                     }
                 })],
-                private_metadata: page_json,
+                private_metadata: key_json,
                 submit: Some("Trade Away!".to_string()),
                 ..Default::default()
             }
@@ -2229,13 +2286,13 @@ async fn action_endpoint(
                 } else {
                     Credentials::None
                 },
+                page: 0,
                 interactivity: Interactivity::Buy,
                 source: PossessionOverviewSource::Market(cat),
                 item_name,
             };
 
-            let page_json = serde_json::to_string(&page).unwrap();
-            page.modal(i.trigger_id, String::new(), "push")
+            page.modal(i.trigger_id, "push")
                 .await?
                 .launch()
                 .await?
@@ -2248,7 +2305,7 @@ async fn action_endpoint(
                 page.credentials = Credentials::Owner;
             }
 
-            page.modal(i.trigger_id, page_json, "push").launch().await?
+            page.modal(i.trigger_id, "push").launch().await?
         }
         "possession_page" => {
             let page_json = action.value;
@@ -2258,13 +2315,13 @@ async fn action_endpoint(
                 page.credentials = Credentials::Owner;
             }
 
-            page.modal(i.trigger_id, page_json, "open").launch().await?
+            page.modal(i.trigger_id, "open").launch().await?
         }
         "possession_overview_page" => {
             let page_json = action.value;
             let page: PossessionOverviewPage = serde_json::from_str(&page_json).unwrap();
 
-            page.modal(i.trigger_id, page_json, "open")
+            page.modal(i.trigger_id, "open")
                 .await?
                 .launch()
                 .await?
@@ -2419,18 +2476,23 @@ async fn event(
             match possession.sale {
                 None => {
                     futures::try_join!(
-                        market::place_on_market(&db, category, id, price, name.clone()),
+                        market::place_on_market(&db, key, price, name.clone()),
                         market::log_blocks(vec![
                             json!({
                                 "type": "section",
                                 "text": mrkdwn(format!(
                                     "A *{}* has gone up for sale! \
                                     <@{}> is selling it on the hackmarket for *{} GP*!",
-                                    name, paid_invoice.invoicee, price
+                                    possession.name, paid_invoice.invoicee, price
                                 )),
                                 "accessory": {
                                     "type": "image",
-                                    "image_url": format!("http://{}/gotchi/img/{}/{}.png", *URL, category, filify(&name)),
+                                    "image_url": format!(
+                                        "http://{}/gotchi/img/{}/{}.png",
+                                        *URL,
+                                        category,
+                                        filify(&possession.name)
+                                    ),
                                     "alt_text": "Hackpheus sitting on bags of money!",
                                 }
                             }),
