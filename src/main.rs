@@ -1895,8 +1895,33 @@ async fn action_endpoint(
         }
         "crafting_confirm" => {
             let craft_json = &action.value;
-            let (_, raw_recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
+            let (plant_id, raw_recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
                 serde_json::from_str(&craft_json).unwrap();
+
+            let hs = Hacksteader::from_db(&dyn_db(), i.user.id.clone()).await?;
+            let all_nb = hs.neighbor_bonuses();
+            let plant = hs
+                .land
+                .into_iter()
+                .find(|t| t.id == plant_id)
+                .ok_or_else(|| {
+                    let e = format!("no tile with id {} for this user {} ", plant_id, i.user.id);
+                    error!("{}", e);
+                    e
+                })?
+                .plant
+                .ok_or_else(|| {
+                    let e = format!("can't craft on tile {}; it's not a plant", plant_id);
+                    error!("{}", e);
+                    e
+                })?;
+
+            let neighbor_bonuses = all_nb
+                .iter()
+                .filter(|(from, ah, _)| *from != plant_id && *ah == plant.archetype_handle)
+                .map(|(_, _, (bonus, _))| bonus);
+
+            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses);
 
             let recipe = raw_recipe
                 .lookup_handles()
@@ -1914,10 +1939,10 @@ async fn action_endpoint(
                         "text": mrkdwn(format!(
                             concat!(
                                 "Are you sure you want your plant to ",
-                                "spend the next {} minutes crafting a ",
+                                "spend the next {:.2} minutes crafting a ",
                                 "{} _{}_ using\n{}\n{}",
                             ),
-                            recipe.time / FARM_CYCLES_PER_MIN as f32,
+                            (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
                             emojify(&recipe.makes.name),
                             recipe.makes.name,
                             recipe
@@ -2501,12 +2526,26 @@ async fn event(
                     )
                     .map(|_| ())
                 }
-                Some(_) => banker::pay(
-                    possession.steader.clone(),
-                    price / 20,
-                    format!("the {} you tried to sell is already up for sale", name)
+                Some(_) => futures::try_join!(
+                    banker::pay(
+                        possession.steader.clone(),
+                        price / 20,
+                        format!("the {} you tried to sell is already up for sale", name),
+                    ),
+                    dm_blocks(paid_invoice.invoicee.clone(), vec![json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            concat!(
+                                "The {} you tried to sell for {}gp has already been sold, ",
+                                "so your {}gp market fee has been refunded."
+                            ),
+                            name,
+                            price,
+                            price / 20
+                        ))
+                    })])
                 )
-                .await
+                .map(|_| ()),
             }?;
 
         //banker::balance().await?;
@@ -2528,12 +2567,24 @@ async fn event(
             match hacksteader::get_possession(&db, key).await?.sale {
                 Some(sale) => sale,
                 None => {
-                    banker::pay(
-                        paid_invoice.invoicee.clone(),
-                        price,
-                        format!("the {} you tried to buy has already been sold", name),
-                    )
-                    .await?;
+                    futures::try_join!(
+                        banker::pay(
+                            paid_invoice.invoicee.clone(),
+                            price,
+                            format!("the {} you tried to buy has already been sold", name),
+                        ),
+                        dm_blocks(paid_invoice.invoicee.clone(), vec![json!({
+                            "type": "section",
+                            "text": mrkdwn(format!(
+                                concat!(
+                                    "The {} you tried to buy for {}gp has already been sold, ",
+                                    "so your GP has been refunded."
+                                ),
+                                name,
+                                price
+                            ))
+                        })])
+                    )?;
                     return Ok(());
                 }
             };
