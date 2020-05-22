@@ -2501,12 +2501,26 @@ async fn event(
                     )
                     .map(|_| ())
                 }
-                Some(_) => banker::pay(
-                    possession.steader.clone(),
-                    price / 20,
-                    format!("the {} you tried to sell is already up for sale", name)
+                Some(_) => futures::try_join!(
+                    banker::pay(
+                        possession.steader.clone(),
+                        price / 20,
+                        format!("the {} you tried to sell is already up for sale", name),
+                    ),
+                    dm_blocks(paid_invoice.invoicee.clone(), vec![json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            concat!(
+                                "The {} you tried to sell for {}gp has already been sold, ",
+                                "so your {}gp market fee has been refunded."
+                            ),
+                            name,
+                            price,
+                            price / 20
+                        ))
+                    })])
                 )
-                .await
+                .map(|_| ()),
             }?;
 
         //banker::balance().await?;
@@ -2528,12 +2542,24 @@ async fn event(
             match hacksteader::get_possession(&db, key).await?.sale {
                 Some(sale) => sale,
                 None => {
-                    banker::pay(
-                        paid_invoice.invoicee.clone(),
-                        price,
-                        format!("the {} you tried to buy has already been sold", name),
-                    )
-                    .await?;
+                    futures::try_join!(
+                        banker::pay(
+                            paid_invoice.invoicee.clone(),
+                            price,
+                            format!("the {} you tried to buy has already been sold", name),
+                        ),
+                        dm_blocks(paid_invoice.invoicee.clone(), vec![json!({
+                            "type": "section",
+                            "text": mrkdwn(format!(
+                                concat!(
+                                    "The {} you tried to buy for {}gp has already been sold, ",
+                                    "so your GP has been refunded."
+                                ),
+                                name,
+                                price
+                            ))
+                        })])
+                    )?;
                     return Ok(());
                 }
             };
