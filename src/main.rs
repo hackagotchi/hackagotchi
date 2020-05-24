@@ -1210,7 +1210,7 @@ async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> 
             Interactivity::Read,
             Credentials::None
         ),
-        "response_type": "in_channel",
+        "response_type": "ephemeral",
     }))
 }
 
