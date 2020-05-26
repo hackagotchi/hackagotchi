@@ -4,6 +4,7 @@
 #![recursion_limit = "512"]
 use crossbeam_channel::Sender;
 use hacksteader::{Category, Key};
+use slack::safety::{SlackSafety};
 use log::*;
 use rocket::request::LenientForm;
 use rocket::tokio;
@@ -1044,30 +1045,37 @@ struct SlashCommand {
     trigger_id: String,
 }
 
-#[post("/hackmarket", data = "<slash_command>")]
-async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), String> {
-    info!("{} | {}", slash_command.command, slash_command.text);
+#[post("/hackmarket", data = "<slash_command_result>")]
+async fn hackmarket<'a>(slash_command_result: Result<SlackSafety<LenientForm<SlashCommand>>,&str>) -> Result<(), String> {
 
-    Modal {
-        method: "open".to_string(),
-        trigger_id: slash_command.trigger_id.clone(),
-        callback_id: "hackstreet_modal".to_string(),
-        title: "Hackstreet!".to_string(),
-        private_metadata: String::new(),
-        blocks: hackmarket_blocks(
-            match slash_command.text.as_str() {
-                "gotchi" | "g" => Category::Gotchi,
-                _ => Category::Misc,
-            },
-            slash_command.user_id.clone()
-        )
-        .await,
-        submit: None,
-    }
-    .launch()
-    .await?;
+    match slash_command_result {
+        Ok(slash_command) -> Result<(), String> {
+            !("{} | {}", slash_command.command, slash_command.text);
+            Modal {
+                method: "open".to_string(),
+                trigger_id: slash_command.trigger_id.clone(),
+                callback_id: "hackstreet_modal".to_string(),
+                title: "Hackstreet!".to_string(),
+                private_metadata: String::new(),
+                blocks: hackmarket_blocks(
+                    match slash_command.text.as_str() {
+                        "gotchi" | "g" => Category::Gotchi,
+                        _ => Category::Misc,
+                    },
+                    slash_command.user_id.clone()
+                )
+                .await,
+                submit: None,
+            }
+            .launch()
+            .await?;
 
-    Ok(())
+            Ok(())
+        }
+        Err(_error) -> Result<(), String> {
+            Ok(())
+        }
+    
 }
 
 pub async fn stateofsteading_blocks() -> Vec<Value> {
@@ -1170,48 +1178,61 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
     .collect()
 }
 
-#[post("/stateofsteading", data = "<slash_command>")]
-async fn stateofsteading<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), String> {
-    Modal {
-        method: "open".to_string(),
-        trigger_id: slash_command.trigger_id.clone(),
-        callback_id: "stateofsteading_modal".to_string(),
-        title: "All the Steaders!".to_string(),
-        private_metadata: String::new(),
-        blocks: stateofsteading_blocks().await,
-        submit: None,
+#[post("/stateofsteading", data = "<slash_command_result>")]
+async fn stateofsteading<'a>(slash_command_result: Result<SlackSafety<LenientForm<SlashCommand>>,&str>) -> Result<(), String> {
+    match slash_command_result {
+        Ok(slash_command) -> Result<(), String> {
+            Modal {
+                    method: "open".to_string(),
+                    trigger_id: slash_command.trigger_id.clone(),
+                    callback_id: "stateofsteading_modal".to_string(),
+                    title: "All the Steaders!".to_string(),
+                    private_metadata: String::new(),
+                    blocks: stateofsteading_blocks().await,
+                    submit: None,
+                }
+                .launch()
+                .await?;
+            Ok(())
+        }
+        Err(_error) -> Result<(), String> {
+            Ok(())
+        }
     }
-    .launch()
-    .await?;
-
-    Ok(())
 }
 
-#[post("/hackstead", data = "<slash_command>")]
-async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
-    debug!("{:#?}", slash_command);
+#[post("/hackstead", data = "<slash_command_result>")]
+async fn hackstead<'a>(slash_command_result: Result<SlackSafety<LenientForm<SlashCommand>>,&str>) -> Json<Value> {
+    match slash_command_result {
+        Ok(slash_command) -> Json<Value> {
+            debug!("{:#?}", slash_command);
 
-    lazy_static::lazy_static! {
-        static ref HACKSTEAD: regex::Regex = regex::Regex::new(
-            "(<@([A-z0-9]+)|(.+)>)?"
-        ).unwrap();
+            lazy_static::lazy_static! {
+                static ref HACKSTEAD: regex::Regex = regex::Regex::new(
+                    "(<@([A-z0-9]+)|(.+)>)?"
+                ).unwrap();
+            }
+
+            let captures = HACKSTEAD.captures(&slash_command.text);
+            debug!("captures: {:#?}", captures);
+            let user = captures
+                .and_then(|c| c.get(2).map(|x| x.as_str()))
+                .unwrap_or(&slash_command.user_id);
+
+            let hs = Hacksteader::from_db(&dyn_db(), user.to_string()).await;
+            Json(json!({
+                "blocks": hacksteader_greeting_blocks(
+                    hs.ok(),
+                    Interactivity::Read,
+                    Credentials::None
+                ),
+                "response_type": "ephemeral",
+            }))
+        }
+        Err(_error) -> Json<Value> {
+            Ok(())
+        }
     }
-
-    let captures = HACKSTEAD.captures(&slash_command.text);
-    debug!("captures: {:#?}", captures);
-    let user = captures
-        .and_then(|c| c.get(2).map(|x| x.as_str()))
-        .unwrap_or(&slash_command.user_id);
-
-    let hs = Hacksteader::from_db(&dyn_db(), user.to_string()).await;
-    Json(json!({
-        "blocks": hacksteader_greeting_blocks(
-            hs.ok(),
-            Interactivity::Read,
-            Credentials::None
-        ),
-        "response_type": "ephemeral",
-    }))
 }
 
 #[derive(FromForm, Debug)]
@@ -1386,11 +1407,13 @@ pub enum Credentials {
     None,
 }
 
-#[post("/interact", data = "<action_data>")]
+#[post("/interact", data = "<action_data_result>")]
 async fn action_endpoint(
     to_farming: State<'_, Sender<FarmingInputEvent>>,
-    action_data: LenientForm<ActionData>,
+    action_data_result: Result<SlackSafety<LenientForm<ActionData>>,&str>,
 ) -> Result<ActionResponse, String> {
+    match (action_data_result) {
+        Ok(action_data) -> Result<ActionResponse, String> {
     debug!("{:?}", action_data);
     let v = serde_json::from_str::<Value>(&action_data.payload).unwrap();
     debug!("action data: {:#?}", v);
@@ -2355,6 +2378,11 @@ async fn action_endpoint(
     };
 
     Ok(ActionResponse::Json(Json(output_json)))
+        }
+        Err(error) -> Result<ActionResponse, String> {
+            Ok(ActionResponse::Json(Json(error)))
+        }
+    }
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -2384,11 +2412,13 @@ pub struct Message<'a> {
     tab: Option<&'a str>,
 }
 
-#[post("/event", format = "application/json", data = "<e>", rank = 1)]
+#[post("/event", format = "application/json", data = "<e_result>", rank = 1)]
 async fn event(
     to_farming: State<'_, Sender<FarmingInputEvent>>,
-    e: Json<Event<'_>>,
+    e_result: Result<SlackSafety<Json<Event<'_>>>, &str>,
 ) -> Result<(), String> {
+    match (e_result) {
+        Ok(e) -> Result<(), String> {
     use config::CONFIG;
 
     let Event { reply: r } = (*e).clone();
@@ -2988,6 +3018,11 @@ async fn event(
     }
 
     Ok(())
+        }
+        Err(_error) -> {
+            Ok(())
+        }
+    }
 }
 
 #[rocket::get("/steadercount")]
