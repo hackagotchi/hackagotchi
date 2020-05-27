@@ -154,8 +154,8 @@ pub enum ArchetypeKind {
     Keepsake(KeepsakeArchetype),
 }
 impl ArchetypeKind {
-    pub fn category(&self) -> crate::hacksteader::Category {
-        use crate::hacksteader::Category;
+    pub fn category(&self) -> crate::Category {
+        use crate::Category;
         match self {
             ArchetypeKind::Gotchi(_) => Category::Gotchi,
             _ => Category::Misc,
@@ -204,7 +204,7 @@ pub struct Recipe<Handle> {
     pub time: f32,
 }
 impl Recipe<ArchetypeHandle> {
-    pub fn satisfies(&self, inv: &[super::hacksteader::Possession]) -> bool {
+    pub fn satisfies(&self, inv: &[crate::Possession]) -> bool {
         self.needs.iter().copied().all(|(count, ah)| {
             let has = inv.iter().filter(|x| x.archetype_handle == ah).count();
             count <= has
