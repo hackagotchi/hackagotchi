@@ -5,8 +5,8 @@ use crate::{market, Key, AttributeParseError, config, CONFIG, Item, Category};
 use config::{ArchetypeHandle, Archetype, ArchetypeKind};
 
 mod keepsake;
-mod gotchi;
-mod seed;
+pub mod gotchi;
+pub mod seed;
 
 pub use keepsake::Keepsake;
 pub use gotchi::Gotchi;

@@ -10,6 +10,11 @@ pub mod market;
 pub mod config;
 pub mod possess;
 pub mod category;
+pub mod frontend {
+    pub fn emojify<S: ToString>(txt: S) -> String {
+        format!(":{}:", txt.to_string().replace(" ", "_"))
+    }
+}
 
 pub use category::{Category, CategoryError};
 pub use possess::{Possession, Possessed};
@@ -150,7 +155,7 @@ impl Profile {
 
     /// Returns an empty profile Item for the given slack ID.
     /// Useful for searching for a given slack user's Hacksteader profile
-    fn key_item(id: String) -> Item {
+    pub fn key_item(id: String) -> Item {
         [
             ("cat".to_string(), Category::Profile.into_av()),
             (

@@ -3,7 +3,6 @@
 #![feature(try_trait)]
 #![recursion_limit = "512"]
 use crossbeam_channel::Sender;
-use hacksteader::{Category, Key};
 use log::*;
 use rocket::request::LenientForm;
 use rocket::tokio;
@@ -12,13 +11,17 @@ use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::convert::TryInto;
+use core::{Category, Key};
+use core::config;
+use core::possess;
+use core::frontend::emojify;
+use possess::{Gotchi, Possessed, Possession};
 
 mod banker;
-mod config;
 mod hacksteader;
 mod market;
 
-use hacksteader::{Gotchi, Hacksteader, Possessed, Possession};
+use hacksteader::Hacksteader;
 
 fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
@@ -55,9 +58,6 @@ fn comment<S: ToString>(txt: S) -> Value {
             mrkdwn(txt)
         ]
     })
-}
-fn emojify<S: ToString>(txt: S) -> String {
-    format!(":{}:", txt.to_string().replace(" ", "_"))
 }
 fn filify<S: ToString>(txt: S) -> String {
     txt.to_string().to_lowercase().replace(" ", "_")
@@ -179,7 +179,7 @@ impl PossessionOverviewPage {
                         "{} _{}_{}",
                         emojify(&item_name),
                         item_name,
-                        if let Some(market::Sale { price, .. }) = possession.sale {
+                        if let Some(core::market::Sale { price, .. }) = possession.sale {
                             match source {
                                 PossessionOverviewSource::Hacksteader(..) => {
                                     format!(" (selling at *{}gp*)", price)
@@ -641,11 +641,11 @@ fn hackstead_blocks(
                 let ca = p.current_advancement();
                 let mut actions = vec![];
 
-                let applicables: Vec<Possessed<hacksteader::Keepsake>> = inventory
+                let applicables: Vec<Possessed<possess::Keepsake>> = inventory
                     .iter()
                     .cloned()
                     .filter_map(|x| x.try_into().ok())
-                    .filter(|x: &Possessed<hacksteader::Keepsake>| {
+                    .filter(|x: &Possessed<possess::Keepsake>| {
                         x.inner.item_application_effect.is_some()
                     })
                     .collect();
@@ -673,7 +673,7 @@ fn hackstead_blocks(
                 blocks.push(comment(format!("Last Advancement: \"{}\"", ca.title)));
             }
             None => {
-                let seeds: Vec<Possessed<hacksteader::Seed>> = inventory
+                let seeds: Vec<Possessed<possess::Seed>> = inventory
                     .iter()
                     .cloned()
                     .filter_map(|p| p.try_into().ok())
@@ -1073,7 +1073,7 @@ async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), 
 pub async fn stateofsteading_blocks() -> Vec<Value> {
     use std::collections::HashMap;
 
-    let profiles = hacksteader::Profile::fetch_all(&dyn_db()).await.unwrap();
+    let profiles = core::Profile::fetch_all(&dyn_db()).await.unwrap();
     let tiles = hacksteader::Tile::fetch_all(&dyn_db()).await.unwrap();
 
     struct PlantEntry {
@@ -1462,7 +1462,7 @@ async fn action_endpoint(
                 // update the nickname in the DB
                 let db = dyn_db();
                 db.update_item(rusoto_dynamodb::UpdateItemInput {
-                    table_name: hacksteader::TABLE_NAME.to_string(),
+                    table_name: core::TABLE_NAME.to_string(),
                     key: key.into_item(),
                     update_expression: Some("SET nickname = :new_name".to_string()),
                     expression_attribute_values: Some(
@@ -1559,7 +1559,7 @@ async fn action_endpoint(
                 Hacksteader::transfer_possession(
                     &dyn_db(),
                     new_owner.clone(),
-                    hacksteader::Acquisition::Trade,
+                    possess::Acquisition::Trade,
                     key,
                 )
                 .await
@@ -1831,7 +1831,7 @@ async fn action_endpoint(
                     return Err(a);
                 }
             };
-            let seeds: Vec<Possessed<hacksteader::Seed>> = hs
+            let seeds: Vec<Possessed<possess::Seed>> = hs
                 .inventory
                 .iter()
                 .cloned()
@@ -1926,6 +1926,7 @@ async fn action_endpoint(
             let recipe = raw_recipe
                 .lookup_handles()
                 .ok_or_else(|| "invalid recipe".to_string())?;
+            let possible_output = recipe.makes.any();
 
             Modal {
                 method: "push".to_string(),
@@ -1939,12 +1940,11 @@ async fn action_endpoint(
                         "text": mrkdwn(format!(
                             concat!(
                                 "Are you sure you want your plant to ",
-                                "spend the next {:.2} minutes crafting a ",
-                                "{} _{}_ using\n{}\n{}",
+                                "spend the next {:.2} minutes crafting {}",
+                                "using\n{}\n{}",
                             ),
                             (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
-                            emojify(&recipe.makes.name),
-                            recipe.makes.name,
+                            recipe.makes,
                             recipe
                                 .needs
                                 .iter()
@@ -1968,8 +1968,8 @@ async fn action_endpoint(
                             "type": "image",
                             "image_url": format!("http://{}/gotchi/img/{}/{}.png",
                                 *URL,
-                                recipe.makes.kind.category(),
-                                filify(&recipe.makes.name)
+                                possible_output.kind.category(),
+                                filify(&possible_output.name)
                             ),
                             "alt_text": "The thing you'd like to craft",
                         }
@@ -2003,14 +2003,15 @@ async fn action_endpoint(
                         .lookup_handles()
                         .expect("invalid archetype handle");
                     let mut b = Vec::with_capacity(recipe.needs.len() + 2);
+                    let possible_output = recipe.makes.any();
 
                     let mut head = json!({
                         "type": "section",
                         "text": mrkdwn(format!(
                             "{} *{}*\n_{}_",
-                            emojify(&recipe.makes.name),
-                            recipe.makes.name,
-                            recipe.makes.description
+                            emojify(&possible_output.name),
+                            possible_output.name,
+                            possible_output.description
                         )),
                     });
                     if possible && tile.steader == i.user.id {
@@ -2019,7 +2020,7 @@ async fn action_endpoint(
                             json!({
                                 "type": "button",
                                 "style": "primary",
-                                "text": plain_text(format!("Craft {}", recipe.makes.name)),
+                                "text": plain_text(format!("Craft {}", possible_output.name)),
                                 "value": serde_json::to_string(&(
                                     &tile_id,
                                     raw_recipe,
@@ -2052,6 +2053,7 @@ async fn action_endpoint(
                 private_metadata: String::new(),
                 blocks,
                 submit: None,
+
             }
             .launch()
             .await?
@@ -2229,7 +2231,7 @@ async fn action_endpoint(
         }
         "item_apply" => {
             use config::ApplicationEffect::*;
-            let (tile_id, applicables): (uuid::Uuid, Vec<Possessed<hacksteader::Keepsake>>) =
+            let (tile_id, applicables): (uuid::Uuid, Vec<Possessed<possess::Keepsake>>) =
                 serde_json::from_str(&action.value).unwrap();
 
             Modal {
@@ -2563,7 +2565,7 @@ async fn event(
             tokio::time::delay_for(std::time::Duration::from_secs(1)).await;
 
             let db = dyn_db();
-            let key = hacksteader::Key { category, id };
+            let key = core::Key { category, id };
             match hacksteader::get_possession(&db, key).await?.sale {
                 Some(sale) => sale,
                 None => {
@@ -2611,9 +2613,9 @@ async fn event(
                             ..Default::default()
                         }),
                         (":ownership_entry".to_string(), AttributeValue {
-                            l: Some(vec![hacksteader::Owner {
+                            l: Some(vec![possess::Owner {
                                 id: paid_invoice.invoicee.clone(),
-                                acquisition: hacksteader::Acquisition::Purchase {
+                                acquisition: possess::Acquisition::Purchase {
                                     price: paid_invoice.amount,
                                 }
                             }.into()]),
@@ -2624,7 +2626,7 @@ async fn event(
                         "REMOVE price, market_name ",
                         "SET steader = :new_owner, ownership_log = list_append(ownership_log, :ownership_entry)"
                     ).to_string()),
-                    table_name: hacksteader::TABLE_NAME.to_string(),
+                    table_name: core::TABLE_NAME.to_string(),
                     ..Default::default()
                 }).map_err(|e| format!("database err: {}", e)),
                 banker::pay(seller.clone(), price, paid_for),
@@ -2680,7 +2682,7 @@ async fn event(
 
         let query = dyn_db()
             .query(rusoto_dynamodb::QueryInput {
-                table_name: hacksteader::TABLE_NAME.to_string(),
+                table_name: core::TABLE_NAME.to_string(),
                 key_condition_expression: Some("cat = :gotchi_cat".to_string()),
                 expression_attribute_values: Some({
                     [(":gotchi_cat".to_string(), Category::Gotchi.into_av())]
@@ -2735,7 +2737,7 @@ async fn event(
                 );
                 let steader_in_harvest_log: bool = gotchi.inner.harvest_log.last().filter(|x| x.id == gotchi.steader).is_some();
                 let db_update = rusoto_dynamodb::UpdateItemInput {
-                    table_name: hacksteader::TABLE_NAME.to_string(),
+                    table_name: core::TABLE_NAME.to_string(),
                     key: gotchi.clone().into_possession().key().into_item(),
                     update_expression: Some(if steader_in_harvest_log {
                         format!("ADD harvest_log[{}].harvested :harv", gotchi.inner.harvest_log.len() - 1)
@@ -2752,7 +2754,7 @@ async fn event(
                                 }
                             } else {
                                 AttributeValue {
-                                    l: Some(vec![hacksteader::GotchiHarvestOwner {
+                                    l: Some(vec![possess::gotchi::GotchiHarvestOwner {
                                         id: gotchi.steader.clone(),
                                         harvested: gotchi.inner.base_happiness,
                                     }.into()]),
@@ -2848,9 +2850,9 @@ async fn event(
                     receiver.clone(),
                     &Possession::new(
                         archetype_handle,
-                        hacksteader::Owner {
+                        possess::Owner {
                             id: receiver.clone(),
-                            acquisition: hacksteader::Acquisition::spawned(),
+                            acquisition: possess::Acquisition::spawned(),
                         },
                     ),
                 )
@@ -2913,7 +2915,7 @@ async fn event(
             let db = &dyn_db();
 
             let scan = db.scan(rusoto_dynamodb::ScanInput {
-                table_name: hacksteader::TABLE_NAME.to_string(),
+                table_name: core::TABLE_NAME.to_string(),
                 filter_expression: Some("cat = :item_cat AND archetype_handle = :ah".to_string()),
                 expression_attribute_values: Some(
                     [
@@ -2957,7 +2959,7 @@ async fn event(
                             .map(|items| {
                                 db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
                                     request_items: [(
-                                        hacksteader::TABLE_NAME.to_string(),
+                                        core::TABLE_NAME.to_string(),
                                         items.to_vec(),
                                     )]
                                     .iter()
@@ -2992,7 +2994,7 @@ async fn event(
 
 #[rocket::get("/steadercount")]
 async fn steadercount() -> Result<String, String> {
-    hacksteader::Profile::fetch_all(&dyn_db())
+    core::Profile::fetch_all(&dyn_db())
         .await
         .map(|profiles| profiles.len().to_string())
 }
@@ -3045,7 +3047,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
         async move {
             use futures::stream::{self, StreamExt, TryStreamExt};
-            use hacksteader::{Plant, Profile, Tile};
+            use hacksteader::{Plant, Tile};
+            use core::Profile;
             use std::collections::HashMap;
 
             loop {
@@ -3165,7 +3168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 plant.craft = Some(hacksteader::Craft {
                                     until_finish: recipe.time,
                                     total_cycles: recipe.time,
-                                    makes: recipe.makes,
+                                    makes: recipe.makes.any(),
                                     destroys_plant: recipe.destroys_plant,
                                 });
                             } else {
@@ -3362,7 +3365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 } else {
                                     let p = Possession::new(
                                         craft.makes,
-                                        hacksteader::Owner::crafter(tile.steader.clone()),
+                                        possess::Owner::crafter(tile.steader.clone()),
                                     );
                                     if craft.destroys_plant {
                                         clear_plants.push(tile.id.clone());
@@ -3417,7 +3420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                             (0..spawn_rate.gen_count(&mut rng)).map(move |_| {
                                                 let mut p = Possession::new(
                                                     *ah,
-                                                    hacksteader::Owner::farmer(owner.clone()),
+                                                    possess::Owner::farmer(owner.clone()),
                                                 );
                                                 if let Some(s) = p.kind.seed_mut() {
                                                     s.pedigree = pedigree.clone();
@@ -3430,7 +3433,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                                         sg.generations += 1;
                                                     } else {
                                                         s.pedigree.push(
-                                                            hacksteader::SeedGrower::new(
+                                                            possess::seed::SeedGrower::new(
                                                                 owner.clone(),
                                                                 1,
                                                             ),
@@ -3586,7 +3589,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .map(|items| {
                             db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
                                 request_items: [(
-                                    hacksteader::TABLE_NAME.to_string(),
+                                    core::TABLE_NAME.to_string(),
                                     items.to_vec(),
                                 )]
                                 .iter()

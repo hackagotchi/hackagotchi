@@ -10,10 +10,6 @@ edition = "2018"
 name = "core"
 path = "src/core/lib.rs"
 
-[[bin]]
-name = "yank_config"
-path = "src/yank_config.rs"
-
 [dependencies]
 rocket = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
 rocket_contrib = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
