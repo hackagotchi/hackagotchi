@@ -7,7 +7,11 @@ lazy_static::lazy_static! {
         then: &banker_balance
     };
 }
-fn banker_balance<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn banker_balance<'a>(
+    c: regex::Captures<'a>,
+    _: Message<'a>,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
 
         let balance = c
@@ -131,4 +135,3 @@ fn banker_balance<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<Farm
     }
     .boxed()
 }
-

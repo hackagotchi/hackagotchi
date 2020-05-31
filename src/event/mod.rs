@@ -1,11 +1,11 @@
-use crate::{ID, update_user_home_tab};
-use rocket_contrib::json::Json;
-use crossbeam_channel::Sender;
-use std::pin::Pin;
 use super::banker;
+use crate::{update_user_home_tab, ID};
+use crossbeam_channel::Sender;
 use regex::Regex;
 use rocket::{post, State};
+use rocket_contrib::json::Json;
 use std::future::Future;
+use std::pin::Pin;
 
 mod banker_message;
 mod invoice_payment;
@@ -14,26 +14,26 @@ mod special_user_message;
 mod prelude {
     // std/util
     pub use crossbeam_channel::Sender;
-    pub use std::convert::TryInto;
-    pub use serde_json::{json, Value};
-    pub use regex::Regex;
     pub use log::*;
+    pub use regex::Regex;
+    pub use serde_json::{json, Value};
+    pub use std::convert::TryInto;
     // db
-    pub use rusoto_dynamodb::{AttributeValue, DynamoDb};
     pub use crate::dyn_db;
+    pub use rusoto_dynamodb::{AttributeValue, DynamoDb};
     // futures
-    pub use futures::future::{TryFutureExt, FutureExt};
+    pub use futures::future::{FutureExt, TryFutureExt};
     pub use futures::stream::{self, StreamExt, TryStreamExt};
     // us
-    pub use super::{Trigger, HandlerOutput, Message};
-    pub use crate::{FarmingInputEvent, URL};
-    pub use core::{Category, Key};
-    pub use core::possess;
-    pub use possess::{Possessed, Possession, Gotchi, Seed, Keepsake};
-    pub use core::config;
-    pub use config::CONFIG;
+    pub use super::{HandlerOutput, Message, Trigger};
     pub use crate::{banker, hacksteader, market};
+    pub use crate::{FarmingInputEvent, URL};
+    pub use config::CONFIG;
+    pub use core::config;
+    pub use core::possess;
+    pub use core::{Category, Key};
     pub use hacksteader::Hacksteader;
+    pub use possess::{Gotchi, Keepsake, Possessed, Possession, Seed};
     // slack frontend
     pub use crate::{comment, dm_blocks, filify, mrkdwn};
     pub use core::frontend::emojify;
@@ -99,9 +99,7 @@ pub async fn non_challenge_event(
                 None => continue,
             };
             if let Err(e) = then(c, r.clone(), pi.clone()).await {
-                banker::message(
-                    format!("invoice payment handler err : {}", e)
-                ).await?;
+                banker::message(format!("invoice payment handler err : {}", e)).await?;
             }
         }
     } else if core::config::CONFIG.special_users.contains(&r.user_id) {
@@ -111,9 +109,7 @@ pub async fn non_challenge_event(
                 None => continue,
             };
             if let Err(e) = then(c, r.clone(), &*to_farming).await {
-                banker::message(
-                    format!("special user handler err : {}", e)
-                ).await?;
+                banker::message(format!("special user handler err : {}", e)).await?;
             }
         }
     } else if r.channel == *banker::CHAT_ID {
@@ -123,9 +119,7 @@ pub async fn non_challenge_event(
                 None => continue,
             };
             if let Err(e) = then(c, r.clone(), &*to_farming).await {
-                banker::message(
-                    format!("banker message handler err : {}", e)
-                ).await?;
+                banker::message(format!("banker message handler err : {}", e)).await?;
             }
         }
     }
@@ -134,8 +128,14 @@ pub async fn non_challenge_event(
 }
 
 pub type HandlerOutput<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + 'a + Send>>;
-pub type CaptureHandler = dyn for<'a> Fn(regex::Captures<'a>, Message<'a>, &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> + 'static + Sync + Send;
-pub type PaidInvoiceHandler = dyn for<'a> Fn(regex::Captures<'a>, Message<'a>, banker::PaidInvoice) -> HandlerOutput<'a> + 'static + Sync + Send;
+pub type CaptureHandler = dyn for<'a> Fn(regex::Captures<'a>, Message<'a>, &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a>
+    + 'static
+    + Sync
+    + Send;
+pub type PaidInvoiceHandler = dyn for<'a> Fn(regex::Captures<'a>, Message<'a>, banker::PaidInvoice) -> HandlerOutput<'a>
+    + 'static
+    + Sync
+    + Send;
 pub struct Trigger<T> {
     regex: Regex,
     then: T,

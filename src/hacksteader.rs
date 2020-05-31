@@ -1,11 +1,11 @@
+use config::{ArchetypeHandle, PlantArchetype, CONFIG};
+use core::config;
+use core::possess;
+use core::{AttributeParseError, Category, Item, Key, Profile, TABLE_NAME};
+use possess::{Possessed, Possession};
 use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
 use std::time::SystemTime;
-use core::{AttributeParseError, Category, Key, TABLE_NAME, Item, Profile};
-use core::config;
-use config::{ArchetypeHandle, PlantArchetype, CONFIG};
-use core::possess;
-use possess::{Possession, Possessed};
 
 pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
     db.get_item(rusoto_dynamodb::GetItemInput {

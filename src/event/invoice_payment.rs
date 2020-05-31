@@ -1,5 +1,5 @@
-use super::InvoicePaymentTrigger;
 use super::prelude::*;
+use super::InvoicePaymentTrigger;
 
 pub struct Sale {
     name: String,
@@ -23,12 +23,12 @@ impl Sale {
                 .parse()
                 .map_err(|e| format!("sale price number parsing: {}", e))?,
             id: uuid::Uuid::parse_str(
-                    captures
-                        .get(3)
-                        .ok_or_else(|| "no id in sale".to_string())?
-                        .as_str()
-                )
-                .map_err(|e| format!("invalid uuid in sale: {}", e))?,
+                captures
+                    .get(3)
+                    .ok_or_else(|| "no id in sale".to_string())?
+                    .as_str(),
+            )
+            .map_err(|e| format!("invalid uuid in sale: {}", e))?,
             category: captures
                 .get(4)
                 .ok_or_else(|| "no category in sale".to_string())?
@@ -48,7 +48,11 @@ lazy_static::lazy_static! {
         then: &hackmarket_fees
     };
 }
-fn hackmarket_fees<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice: banker::PaidInvoice) -> HandlerOutput<'a> {
+fn hackmarket_fees<'a>(
+    c: regex::Captures<'a>,
+    _: Message<'a>,
+    paid_invoice: banker::PaidInvoice,
+) -> HandlerOutput<'a> {
     async move {
         let Sale {
             name,
@@ -62,51 +66,52 @@ fn hackmarket_fees<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice: ban
         let key = Key { category, id };
         let possession = hacksteader::get_possession(&db, key).await?;
         match possession.sale {
-            None => {
-                futures::try_join!(
-                    market::place_on_market(&db, key, price, name.clone()),
-                    market::log_blocks(vec![
-                        json!({
-                            "type": "section",
-                            "text": mrkdwn(format!(
-                                "A *{}* has gone up for sale! \
-                                <@{}> is selling it on the hackmarket for *{} GP*!",
-                                possession.name, paid_invoice.invoicee, price
-                            )),
-                            "accessory": {
-                                "type": "image",
-                                "image_url": format!(
-                                    "http://{}/gotchi/img/{}/{}.png",
-                                    *URL,
-                                    category,
-                                    filify(&possession.name)
-                                ),
-                                "alt_text": "Hackpheus sitting on bags of money!",
-                            }
-                        }),
-                        comment("QWIK U BETTR BYE ET B4 SUM1 EYLS"),
-                    ]),
-                )
-                .map(|_| ())
-            }
+            None => futures::try_join!(
+                market::place_on_market(&db, key, price, name.clone()),
+                market::log_blocks(vec![
+                    json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            "A *{}* has gone up for sale! \
+                            <@{}> is selling it on the hackmarket for *{} GP*!",
+                            possession.name, paid_invoice.invoicee, price
+                        )),
+                        "accessory": {
+                            "type": "image",
+                            "image_url": format!(
+                                "http://{}/gotchi/img/{}/{}.png",
+                                *URL,
+                                category,
+                                filify(&possession.name)
+                            ),
+                            "alt_text": "Hackpheus sitting on bags of money!",
+                        }
+                    }),
+                    comment("QWIK U BETTR BYE ET B4 SUM1 EYLS"),
+                ]),
+            )
+            .map(|_| ()),
             Some(_) => futures::try_join!(
                 banker::pay(
                     possession.steader.clone(),
                     price / 20,
                     format!("the {} you tried to sell is already up for sale", name),
                 ),
-                dm_blocks(paid_invoice.invoicee.clone(), vec![json!({
-                    "type": "section",
-                    "text": mrkdwn(format!(
-                        concat!(
-                            "The {} you tried to sell for {}gp has already been sold, ",
-                            "so your {}gp market fee has been refunded."
-                        ),
-                        name,
-                        price,
-                        price / 20
-                    ))
-                })])
+                dm_blocks(
+                    paid_invoice.invoicee.clone(),
+                    vec![json!({
+                        "type": "section",
+                        "text": mrkdwn(format!(
+                            concat!(
+                                "The {} you tried to sell for {}gp has already been sold, ",
+                                "so your {}gp market fee has been refunded."
+                            ),
+                            name,
+                            price,
+                            price / 20
+                        ))
+                    })]
+                )
             )
             .map(|_| ()),
         }?;
@@ -124,7 +129,11 @@ lazy_static::lazy_static! {
         then: &hackmarket_purchase
     };
 }
-fn hackmarket_purchase<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice: banker::PaidInvoice) -> HandlerOutput<'a> {
+fn hackmarket_purchase<'a>(
+    c: regex::Captures<'a>,
+    _: Message<'a>,
+    paid_invoice: banker::PaidInvoice,
+) -> HandlerOutput<'a> {
     async move {
         let Sale {
             name,
@@ -240,7 +249,7 @@ fn hackmarket_purchase<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice:
             error!("{}", a);
             a
         })?;
-        
+
         Ok(())
     }
     .boxed()
@@ -252,7 +261,11 @@ lazy_static::lazy_static! {
         then: &start_hackstead_invoice_payment
     };
 }
-fn start_hackstead_invoice_payment<'a>(_: regex::Captures<'a>, _: Message<'a>, paid_invoice: banker::PaidInvoice) -> HandlerOutput<'a> {
+fn start_hackstead_invoice_payment<'a>(
+    _: regex::Captures<'a>,
+    _: Message<'a>,
+    paid_invoice: banker::PaidInvoice,
+) -> HandlerOutput<'a> {
     async move {
         if !hacksteader::exists(&dyn_db(), paid_invoice.invoicee.clone()).await {
             Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee.clone())

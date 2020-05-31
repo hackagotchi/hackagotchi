@@ -1,8 +1,10 @@
-use reqwest::Client;
+use config::{
+    Advancement, AdvancementSet, AdvancementSum, HacksteadAdvancementSet, PlantArchetype,
+};
 use core::config;
-use config::{AdvancementSet, PlantArchetype, HacksteadAdvancementSet, Advancement, AdvancementSum};
+use reqwest::Client;
 use rocket::tokio;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -10,7 +12,7 @@ use std::fmt;
 /// Short for "Config configuration" which is short for "configuration configuration"
 struct CConfig {
     plants: PlantCConfig,
-    hackstead_advancements_sheet_id: String
+    hackstead_advancements_sheet_id: String,
 }
 #[derive(Serialize, Deserialize, Debug)]
 struct PlantCConfig {
@@ -23,16 +25,14 @@ pub enum YankError {
     /// Contains: Message, Error
     RequestError(&'static str, reqwest::Error),
     /// Contains: Sheet Name, Error
-    SheetError(String, SheetError)
+    SheetError(String, SheetError),
 }
 impl fmt::Display for YankError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use YankError::*;
         match self {
             RequestError(msg, e) => write!(f, "Request Error({}): {}", msg, e),
-            SheetError(sheet_name, e) => {
-                write!(f, "Error parsing \"{}\" sheet: {}", sheet_name, e)
-            }
+            SheetError(sheet_name, e) => write!(f, "Error parsing \"{}\" sheet: {}", sheet_name, e),
         }
     }
 }
@@ -60,43 +60,33 @@ impl fmt::Display for SheetError {
             MissingCell(cell_desc, row) => {
                 write!(f, "missing \"{}\" cell on row {}", cell_desc, row)
             }
-            CellJsonError(cell_desc, json_err, full_json, row) => {
-                write!(
-                    f,
-                    concat!(
-                        "Invalid json in \"{}\" cell on row {}\n",
-                        "full json: \n{}\n\n",
-                        "error: {}\n",
-                    ),
-                    cell_desc,
-                    row,
-                    full_json
-                        .split('\n')
-                        .enumerate()
-                        .map(|(i, s)| format!("{:>3} | {}", i + 1, s))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    json_err,
-                )
-            }
-            CellFloatParsingError(cell_desc, flt_err, row) => {
-                write!(
-                    f,
-                    "Invalid decimal number in \"{}\" cell on row {}: {}",
-                    cell_desc,
-                    row,
-                    flt_err,
-                )
-            }
-            CellIntParsingError(cell_desc, int_err, row) => {
-                write!(
-                    f,
-                    "Invalid integer number in \"{}\" cell on row {}: {}",
-                    cell_desc,
-                    row,
-                    int_err,
-                )
-            }
+            CellJsonError(cell_desc, json_err, full_json, row) => write!(
+                f,
+                concat!(
+                    "Invalid json in \"{}\" cell on row {}\n",
+                    "full json: \n{}\n\n",
+                    "error: {}\n",
+                ),
+                cell_desc,
+                row,
+                full_json
+                    .split('\n')
+                    .enumerate()
+                    .map(|(i, s)| format!("{:>3} | {}", i + 1, s))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                json_err,
+            ),
+            CellFloatParsingError(cell_desc, flt_err, row) => write!(
+                f,
+                "Invalid decimal number in \"{}\" cell on row {}: {}",
+                cell_desc, row, flt_err,
+            ),
+            CellIntParsingError(cell_desc, int_err, row) => write!(
+                f,
+                "Invalid integer number in \"{}\" cell on row {}: {}",
+                cell_desc, row, int_err,
+            ),
             Missing(what) => write!(f, "missing {}", what),
             JsonError(msg, e) => write!(f, "json error: {}: {}", msg, e),
         }
@@ -129,9 +119,15 @@ struct Sheet {
 }
 impl Sheet {
     /// turns a sheet into a list of advancements
-    fn to_advancements<S: AdvancementSum>(self, row_offset: usize) -> Result<AdvancementSet<S>, SheetError> {
+    fn to_advancements<S: AdvancementSum>(
+        self,
+        row_offset: usize,
+    ) -> Result<AdvancementSet<S>, SheetError> {
         // convert a single advancement
-        fn to_advancement<S: AdvancementSum>(mut v: Vec<String>, row: usize) -> Result<Advancement<S>, SheetError> {
+        fn to_advancement<S: AdvancementSum>(
+            mut v: Vec<String>,
+            row: usize,
+        ) -> Result<Advancement<S>, SheetError> {
             let value = v.pop().ok_or(MissingCell("Value", row))?;
             let kind = v.pop().ok_or(MissingCell("Kind", row))?;
             let kind_json = format!("{{ \"{}\": {} }}", kind, value);
@@ -177,9 +173,17 @@ impl Sheet {
         let first_cell = first_row.first().ok_or(Missing("first cell"))?;
         let base_yield_duration = {
             let mut sections = first_cell.split(':');
-            let _ = sections.next().ok_or(Missing("first cell on the first row"))?;
+            let _ = sections
+                .next()
+                .ok_or(Missing("first cell on the first row"))?;
             let base = sections.next().ok_or(Missing("colon in first cell"))?;
-            base.trim().parse().map_err(|e| CellFloatParsingError("number after colon in first cell for base yield duration", e, 0))?
+            base.trim().parse().map_err(|e| {
+                CellFloatParsingError(
+                    "number after colon in first cell for base yield duration",
+                    e,
+                    0,
+                )
+            })?
         };
 
         Ok(PlantArchetype {
@@ -193,7 +197,7 @@ impl Sheet {
                 // at one.
                 const PLANT_ARCHETYPE_ADVANCEMENT_ROW_OFFSET: usize = 1 + 1;
                 self.to_advancements(PLANT_ARCHETYPE_ADVANCEMENT_ROW_OFFSET)?
-            }
+            },
         })
     }
 }
@@ -205,9 +209,7 @@ async fn yank_sheet(client: &Client, id: &str, name: String) -> Result<Sheet, Ya
                 "https://sheets.googleapis.com/v4/spreadsheets/{}/",
                 "values/{}?key={}",
             ),
-            id,
-            name,
-            *KEY
+            id, name, *KEY
         ))
         .send()
         .await
@@ -218,17 +220,18 @@ async fn yank_sheet(client: &Client, id: &str, name: String) -> Result<Sheet, Ya
 
     Ok(Sheet {
         values: serde_json::from_value(
-            v
-                .get("values")
-                .ok_or_else(|| YankError::SheetError(name.clone(), Missing(
-                    "values field in sheet json"
-                )))?
-                .clone()
+            v.get("values")
+                .ok_or_else(|| {
+                    YankError::SheetError(name.clone(), Missing("values field in sheet json"))
+                })?
+                .clone(),
         )
-        .map_err(|e| YankError::SheetError(name.clone(), JsonError(
-            "google sheet json has invalid values field",
-            e
-        )))?,
+        .map_err(|e| {
+            YankError::SheetError(
+                name.clone(),
+                JsonError("google sheet json has invalid values field", e),
+            )
+        })?,
         name,
     })
 }
@@ -239,12 +242,12 @@ async fn yank_sheet(client: &Client, id: &str, name: String) -> Result<Sheet, Ya
 // if that is not the case.
 async fn yank_sheet_not_empty() {
     dotenv::dotenv().ok();
-    
+
     let client = reqwest::Client::new();
     let s = yank_sheet(
         &client,
         "129av9xlxkby72vkYOJrKHN1ybEM1EGY_YHGsFoSgGwo",
-        "bractus"
+        "bractus",
     )
     .await;
 
@@ -260,86 +263,87 @@ fn load_config() {
 
 #[test]
 fn sheet_to_advancement() {
-    use config::{PlantAdvancementSet, PlantAdvancementKind};
+    use config::{PlantAdvancementKind, PlantAdvancementSet};
 
     let sheet = Sheet {
         values: vec![
             vec!["0", "Title", "Desc", "A_Title", "Art", "YieldSize", "1.1"],
-            vec!["2", "Title2", "Desc2", "A_Title2", "Art2", "YieldSpeed", "2.2"],
+            vec![
+                "2",
+                "Title2",
+                "Desc2",
+                "A_Title2",
+                "Art2",
+                "YieldSpeed",
+                "2.2",
+            ],
         ]
         .into_iter()
         .map(|v| v.into_iter().map(|x| x.to_string()).collect())
-        .collect()
+        .collect(),
     };
 
     let mut adv: PlantAdvancementSet = sheet.to_advancements().unwrap();
 
     // the one with 0 xp should become the base
-    assert!(adv.base == Advancement {
-        xp: 0,
-        title: "Title".to_string(),
-        description: "Desc".to_string(),
-        achiever_title: "A_Title".to_string(),
-        art: "Art".to_string(),
-        kind: PlantAdvancementKind::YieldSize(1.1),
-    });
+    assert!(
+        adv.base
+            == Advancement {
+                xp: 0,
+                title: "Title".to_string(),
+                description: "Desc".to_string(),
+                achiever_title: "A_Title".to_string(),
+                art: "Art".to_string(),
+                kind: PlantAdvancementKind::YieldSize(1.1),
+            }
+    );
 
     // base should not be present in the "rest"
     assert!(adv.rest.len() == 1);
 
     // make sure the second advancement made its way to the "rest"
     let last = adv.rest.pop().expect("no last!");
-    assert!(last == Advancement {
-        xp: 2,
-        title: "Title2".to_string(),
-        description: "Desc2".to_string(),
-        achiever_title: "A_Title2".to_string(),
-        art: "Art2".to_string(),
-        kind: PlantAdvancementKind::YieldSpeed(2.2),
-    });
+    assert!(
+        last == Advancement {
+            xp: 2,
+            title: "Title2".to_string(),
+            description: "Desc2".to_string(),
+            achiever_title: "A_Title2".to_string(),
+            art: "Art2".to_string(),
+            kind: PlantAdvancementKind::YieldSpeed(2.2),
+        }
+    );
 }
 
 pub async fn yank_config() -> Result<(), YankError> {
-    use futures::stream::{self, TryStreamExt, StreamExt};
-    
+    use futures::stream::{self, StreamExt, TryStreamExt};
+
     let client = reqwest::Client::new();
 
-    let (plant_archetypes, hackstead_advancements): (
-        Vec<PlantArchetype>,
-        HacksteadAdvancementSet,
-    ) = futures::try_join!(
-        stream::iter(
-                C_CONFIG.plants.include.clone()
-            )
-            .map(|plant_name| async {
+    let (plant_archetypes, hackstead_advancements): (Vec<PlantArchetype>, HacksteadAdvancementSet) =
+        futures::try_join!(
+            stream::iter(C_CONFIG.plants.include.clone())
+                .map(|plant_name| async {
+                    yank_sheet(&client, &C_CONFIG.plants.sheet_id, plant_name.clone())
+                        .await?
+                        .to_plant_archetype()
+                        .map_err(|e| YankError::SheetError(plant_name, e))
+                })
+                .buffer_unordered(50)
+                .try_collect::<Vec<PlantArchetype>>(),
+            async {
                 yank_sheet(
-                    &client,
-                    &C_CONFIG.plants.sheet_id,
-                    plant_name.clone()
-                )
-                .await?
-                .to_plant_archetype()
-                .map_err(|e| YankError::SheetError(plant_name, e))
-            })
-            .buffer_unordered(50)
-            .try_collect::<Vec<PlantArchetype>>(),
-        async {
-            yank_sheet(
                     &client,
                     &C_CONFIG.hackstead_advancements_sheet_id,
                     "Hackstead Advancements".to_string(),
                 )
                 .await
                 .and_then(|s| {
-                    s
-                        .to_advancements(1)
-                        .map_err(|e| YankError::SheetError(
-                            "Hackstead Advancements".to_string(),
-                            e
-                        ))
+                    s.to_advancements(1)
+                        .map_err(|e| YankError::SheetError("Hackstead Advancements".to_string(), e))
                 })
-        }
-    )?;
+            }
+        )?;
 
     println!("{:#?}", plant_archetypes);
 

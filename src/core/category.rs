@@ -1,7 +1,7 @@
 use rusoto_dynamodb::AttributeValue;
-use serde::{Serialize, Deserialize};
-use std::fmt;
+use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
+use std::fmt;
 
 // A searchable category in the market. May or may not
 // correspond 1:1 to an Archetype.
@@ -84,4 +84,3 @@ impl std::convert::TryFrom<u8> for Category {
         })
     }
 }
-

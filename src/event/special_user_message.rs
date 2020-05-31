@@ -1,5 +1,5 @@
-use super::SpecialUserMessageTrigger;
 use super::prelude::*;
+use super::SpecialUserMessageTrigger;
 
 lazy_static::lazy_static! {
     pub static ref SPAWN_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
@@ -7,19 +7,30 @@ lazy_static::lazy_static! {
         then: &spawn_command
     };
 }
-fn spawn_command<'a>(c: regex::Captures<'a>, r: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn spawn_command<'a>(
+    c: regex::Captures<'a>,
+    r: Message<'a>,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
         info!("spawn possession captures: {:?}", c);
 
-        let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id).to_string();
+        let receiver = c
+            .get(3)
+            .map(|x| x.as_str())
+            .unwrap_or(&r.user_id)
+            .to_string();
         let amount = c.get(5).and_then(|x| x.as_str().parse().ok()).unwrap_or(1);
-        let possession_name = c.get(6).ok_or_else(|| "no item specified".to_string())?.as_str();
+        let possession_name = c
+            .get(6)
+            .ok_or_else(|| "no item specified".to_string())?
+            .as_str();
         let archetype_handle = CONFIG
             .possession_archetypes
             .iter()
             .position(|x| x.name == possession_name)
             .ok_or_else(|| format!("no archetype by name of {}", possession_name))?;
-            
+
         let arch = CONFIG
             .possession_archetypes
             .get(archetype_handle)
@@ -55,7 +66,7 @@ fn spawn_command<'a>(c: regex::Captures<'a>, r: Message<'a>, _: &'a Sender<Farmi
                     "alt_text": "Hackpheus holding a Gift!",
                 }
             }),
-            comment("U GET AN EGG, U GET AN EGG, U GET AN EGG!")
+            comment("U GET AN EGG, U GET AN EGG, U GET AN EGG!"),
         ])
         .await?;
 
@@ -90,9 +101,17 @@ lazy_static::lazy_static! {
         then: &gp_dump_command
     };
 }
-fn gp_dump_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn gp_dump_command<'a>(
+    c: regex::Captures<'a>,
+    _: Message<'a>,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
-        let dump_to = c.get(2).ok_or_else(|| "no dump receiver".to_string())?.as_str().to_string();
+        let dump_to = c
+            .get(2)
+            .ok_or_else(|| "no dump receiver".to_string())?
+            .as_str()
+            .to_string();
         let dump_amount = c
             .get(3)
             .ok_or_else(|| "no dump amount".to_string())?
@@ -113,11 +132,14 @@ lazy_static::lazy_static! {
         then: &yank_config
     };
 }
-fn yank_config<'a>(_: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn yank_config<'a>(
+    _: regex::Captures<'a>,
+    _: Message<'a>,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
         banker::message(match crate::yank_config::yank_config().await {
-            Ok(()) => "goblin chanting brought forth new config from the heavens!"
-                .to_string(),
+            Ok(()) => "goblin chanting brought forth new config from the heavens!".to_string(),
             Err(e) => format!("goblin chanting interrupted by vile belch: {}", e),
         })
         .await
@@ -131,7 +153,11 @@ lazy_static::lazy_static! {
         then: &stomp_command
     };
 }
-fn stomp_command<'a>(_: regex::Captures<'a>, _: Message<'a>, to_farming: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn stomp_command<'a>(
+    _: regex::Captures<'a>,
+    _: Message<'a>,
+    to_farming: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
         info!("goblin_stomp time!");
 
@@ -150,7 +176,11 @@ lazy_static::lazy_static! {
         then: &slaughter_command
     };
 }
-fn slaughter_command<'a>(_: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn slaughter_command<'a>(
+    _: regex::Captures<'a>,
+    _: Message<'a>,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
         info!("goblin slaughter time!");
 
@@ -169,16 +199,19 @@ lazy_static::lazy_static! {
         then: &nab_command
     };
 }
-fn nab_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn nab_command<'a>(
+    c: regex::Captures<'a>,
+    _: Message<'a>,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     async move {
         info!("goblin nab time!");
 
         let archetype_handle = CONFIG
             .find_possession_handle(
-                &c
-                    .get(2)
+                &c.get(2)
                     .ok_or_else(|| "no item to nab".to_string())?
-                    .as_str()
+                    .as_str(),
             )
             .map_err(|e| format!("unknown item: {}", e))?;
 
@@ -228,13 +261,10 @@ fn nab_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<Farming
                         .chunks(25)
                         .map(|items| {
                             db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                                request_items: [(
-                                    core::TABLE_NAME.to_string(),
-                                    items.to_vec(),
-                                )]
-                                .iter()
-                                .cloned()
-                                .collect(),
+                                request_items: [(core::TABLE_NAME.to_string(), items.to_vec())]
+                                    .iter()
+                                    .cloned()
+                                    .collect(),
                                 ..Default::default()
                             })
                         }),

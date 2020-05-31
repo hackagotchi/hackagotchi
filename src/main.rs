@@ -2,8 +2,15 @@
 #![feature(proc_macro_hygiene)]
 #![feature(try_trait)]
 #![recursion_limit = "512"]
+use config::CONFIG;
+use core::config;
+use core::frontend::emojify;
+use core::possess;
+use core::{Category, Key};
 use crossbeam_channel::Sender;
 use log::*;
+use possess::{Possessed, Possession};
+use regex::Regex;
 use rocket::request::LenientForm;
 use rocket::tokio;
 use rocket::{post, routes, FromForm, State};
@@ -11,19 +18,12 @@ use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::convert::TryInto;
-use regex::Regex;
-use core::{Category, Key};
-use core::config;
-use config::CONFIG;
-use core::possess;
-use core::frontend::emojify;
-use possess::{Possessed, Possession};
 
 pub mod banker;
+pub mod event;
 pub mod hacksteader;
 pub mod market;
 mod yank_config;
-pub mod event;
 
 use hacksteader::Hacksteader;
 
@@ -147,14 +147,17 @@ impl PossessionOverviewPage {
         let inventory: Vec<_> = match source {
             PossessionOverviewSource::Hacksteader(hacksteader) => {
                 let hs = Hacksteader::from_db(&dyn_db(), hacksteader.clone()).await?;
-                let mut inv: Vec<_> = hs.inventory.into_iter().filter(|i| i.name == *item_name).collect();
-                inv
-                    .sort_unstable_by(|a, b| match (a.sale.as_ref(), b.sale.as_ref()) {
-                        (Some(a), Some(b)) => a.price.cmp(&b.price),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => std::cmp::Ordering::Equal,
-                    });
+                let mut inv: Vec<_> = hs
+                    .inventory
+                    .into_iter()
+                    .filter(|i| i.name == *item_name)
+                    .collect();
+                inv.sort_unstable_by(|a, b| match (a.sale.as_ref(), b.sale.as_ref()) {
+                    (Some(a), Some(b)) => a.price.cmp(&b.price),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                });
                 inv
             }
             PossessionOverviewSource::Market(cat) => market::market_search(&dyn_db(), *cat)
@@ -250,7 +253,7 @@ impl PossessionOverviewPage {
                             "action_id": "possession_overview_page"
                         }));
                     }
-                     
+
                     buttons
                 })
             }));
@@ -951,13 +954,8 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
         .map_err(|e| error!("couldn't search market: {}", e))
         .unwrap_or_default();
 
-    let (all_goods_count, all_goods_price) = (
-        sales.len(),
-        sales
-            .iter()
-            .map(|(s, _)| s.price)
-            .sum::<u64>(),
-    );
+    let (all_goods_count, all_goods_price) =
+        (sales.len(), sales.iter().map(|(s, _)| s.price).sum::<u64>());
 
     let (your_goods_count, your_goods_price) = sales
         .iter()
@@ -1028,7 +1026,7 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
                 }))
                 .chain(std::iter::once(json!({ "type": "divider" })))
             })
-            .take(entry_count * 2 - 1)
+            .take(entry_count * 2 - 1),
     )
     .collect()
 }
@@ -1063,7 +1061,7 @@ async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), 
                 "gotchi" | "g" => Category::Gotchi,
                 _ => Category::Misc,
             },
-            slash_command.user_id.clone()
+            slash_command.user_id.clone(),
         )
         .await,
         submit: None,
@@ -1086,10 +1084,8 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
         level: usize,
     }
 
-    let mut archetype_occurences: HashMap<
-        config::PlantArchetype,
-        Vec<PlantEntry>
-    > = Default::default();
+    let mut archetype_occurences: HashMap<config::PlantArchetype, Vec<PlantEntry>> =
+        Default::default();
 
     for tile in tiles.iter() {
         let plant = match &tile.plant {
@@ -1107,9 +1103,7 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
                     .last()
                     .map(|x| x.id.clone())
                     .unwrap_or("U013STH0TNG".to_string()),
-                level: plant
-                    .advancements
-                    .current_position(plant.xp)
+                level: plant.advancements.current_position(plant.xp),
             });
     }
 
@@ -1615,10 +1609,8 @@ async fn action_endpoint(
 
             match view.callback_id.as_str() {
                 "crafting_confirm_modal" => {
-                    let (tile_id, recipe): (
-                        uuid::Uuid,
-                        config::Recipe<config::ArchetypeHandle>
-                    ) = serde_json::from_str(&view.private_metadata).unwrap();
+                    let (tile_id, recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
+                        serde_json::from_str(&view.private_metadata).unwrap();
 
                     to_farming
                         .send(FarmingInputEvent::BeginCraft { tile_id, recipe })
@@ -1628,7 +1620,7 @@ async fn action_endpoint(
                         "response_action": "clear",
                     }))));
                 }
-                _ => {},
+                _ => {}
             };
 
             if let Some((tile_id, seed_id)) = values
@@ -1938,47 +1930,45 @@ async fn action_endpoint(
                 callback_id: "crafting_confirm_modal".to_string(),
                 title: "Crafting Confirmation".to_string(),
                 private_metadata: craft_json.to_string(),
-                blocks: vec![
-                    json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            concat!(
-                                "Are you sure you want your plant to ",
-                                "spend the next {:.2} minutes crafting {}",
-                                "using\n{}\n{}",
-                            ),
-                            (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
-                            recipe.makes,
-                            recipe
-                                .needs
-                                .iter()
-                                .map(|(n, what)| {
-                                    format!(
-                                        "*{}* {} _{}_",
-                                        n,
-                                        emojify(&what.name),
-                                        what.name
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                            if recipe.destroys_plant {
-                                "WARNING: THIS WILL DESTROY YOUR PLANT"
-                            } else {
-                                ""
-                            }
-                        )),
-                        "accessory": {
-                            "type": "image",
-                            "image_url": format!("http://{}/gotchi/img/{}/{}.png",
-                                *URL,
-                                possible_output.kind.category(),
-                                filify(&possible_output.name)
-                            ),
-                            "alt_text": "The thing you'd like to craft",
+                blocks: vec![json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        concat!(
+                            "Are you sure you want your plant to ",
+                            "spend the next {:.2} minutes crafting {}",
+                            "using\n{}\n{}",
+                        ),
+                        (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
+                        recipe.makes,
+                        recipe
+                            .needs
+                            .iter()
+                            .map(|(n, what)| {
+                                format!(
+                                    "*{}* {} _{}_",
+                                    n,
+                                    emojify(&what.name),
+                                    what.name
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        if recipe.destroys_plant {
+                            "WARNING: THIS WILL DESTROY YOUR PLANT"
+                        } else {
+                            ""
                         }
-                    })
-                ],
+                    )),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!("http://{}/gotchi/img/{}/{}.png",
+                            *URL,
+                            possible_output.kind.category(),
+                            filify(&possible_output.name)
+                        ),
+                        "alt_text": "The thing you'd like to craft",
+                    }
+                })],
                 submit: Some("Craft!".to_string()),
             }
             .launch()
@@ -2057,7 +2047,6 @@ async fn action_endpoint(
                 private_metadata: String::new(),
                 blocks,
                 submit: None,
-
             }
             .launch()
             .await?
@@ -2323,10 +2312,7 @@ async fn action_endpoint(
                 item_name,
             };
 
-            page.modal(i.trigger_id, "push")
-                .await?
-                .launch()
-                .await?
+            page.modal(i.trigger_id, "push").await?.launch().await?
         }
         "push_possession_page" => {
             let page_json = action.value;
@@ -2352,10 +2338,7 @@ async fn action_endpoint(
             let page_json = action.value;
             let page: PossessionOverviewPage = serde_json::from_str(&page_json).unwrap();
 
-            page.modal(i.trigger_id, "open")
-                .await?
-                .launch()
-                .await?
+            page.modal(i.trigger_id, "open").await?.launch().await?
         }
         _ => mrkdwn("huh?"),
     };
@@ -2417,9 +2400,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         let mut land_cert_queue: HashMap<String, uuid::Uuid> = HashMap::new();
 
         async move {
+            use core::Profile;
             use futures::stream::{self, StreamExt, TryStreamExt};
             use hacksteader::{Plant, Tile};
-            use core::Profile;
             use std::collections::HashMap;
 
             loop {
@@ -2959,13 +2942,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .chunks(25)
                         .map(|items| {
                             db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                                request_items: [(
-                                    core::TABLE_NAME.to_string(),
-                                    items.to_vec(),
-                                )]
-                                .iter()
-                                .cloned()
-                                .collect(),
+                                request_items: [(core::TABLE_NAME.to_string(), items.to_vec())]
+                                    .iter()
+                                    .cloned()
+                                    .collect(),
                                 ..Default::default()
                             })
                         }),

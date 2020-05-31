@@ -200,33 +200,39 @@ pub type PlantAdvancementSet = AdvancementSet<PlantAdvancementSum>;
 pub enum RecipeMakes<Handle: Clone> {
     Just(usize, Handle),
     OneOf(Vec<(f32, Handle)>),
-    AllOf(Vec<(usize, Handle)>)
+    AllOf(Vec<(usize, Handle)>),
 }
 impl<Handle: Clone> RecipeMakes<Handle> {
     /// Returns one possible output, randomly (but properly weighted)
     /// if more than one is possible.
     pub fn any(&self) -> Handle {
-        use RecipeMakes::*;
         use rand::Rng;
+        use RecipeMakes::*;
 
         match self {
             Just(_, h) => h.clone(),
             OneOf(these) => {
                 let mut x: f32 = rand::thread_rng().gen_range(0.0, 1.0);
-                these.iter().find_map(|(chance, h)| {
-                    x -= chance;
-                    if x < 0.0 { Some(h) } else { None }
-                })
-                .unwrap()
-                .clone()
-            },
+                these
+                    .iter()
+                    .find_map(|(chance, h)| {
+                        x -= chance;
+                        if x < 0.0 {
+                            Some(h)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap()
+                    .clone()
+            }
             AllOf(these) => {
                 let total = these.iter().map(|(count, _)| *count).sum::<usize>() as f32;
                 OneOf(
                     these
                         .iter()
                         .map(|(count, h)| (*count as f32 / total, h.clone()))
-                        .collect()
+                        .collect(),
                 )
                 .any()
             }
@@ -235,8 +241,8 @@ impl<Handle: Clone> RecipeMakes<Handle> {
 }
 impl fmt::Display for RecipeMakes<&'static Archetype> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use RecipeMakes::*;
         use crate::frontend::emojify;
+        use RecipeMakes::*;
 
         match self {
             Just(1, x) => write!(f, "a {} _{}_", emojify(&x.name), x.name),
@@ -263,16 +269,11 @@ impl fmt::Display for RecipeMakes<&'static Archetype> {
                 these
                     .iter()
                     .map(|(count, what)| {
-                        format!(
-                            "*{}* {} _{}_",
-                            emojify(&what.name),
-                            what.name,
-                            count
-                        )
+                        format!("*{}* {} _{}_", emojify(&what.name), what.name, count)
                     })
                     .collect::<Vec<_>>()
                     .join("\n")
-            )
+            ),
         }
     }
 }
@@ -288,14 +289,12 @@ impl RecipeMakes<ArchetypeHandle> {
         Some(match self {
             Just(n, ah) => Just(n, lookup(ah)?),
             OneOf(l) => OneOf(
-                l
-                    .into_iter()
+                l.into_iter()
                     .map(|(c, ah)| Some((c, lookup(ah)?)))
                     .collect::<Option<_>>()?,
             ),
             AllOf(l) => AllOf(
-                l
-                    .into_iter()
+                l.into_iter()
                     .map(|(c, ah)| Some((c, lookup(ah)?)))
                     .collect::<Option<_>>()?,
             ),
@@ -314,14 +313,12 @@ impl RecipeMakes<String> {
         Ok(match self {
             Just(n, ah) => Just(n, find(ah)?),
             OneOf(l) => OneOf(
-                l
-                    .into_iter()
+                l.into_iter()
                     .map(|(c, ah)| Ok((c, find(ah)?)))
                     .collect::<Result<_, _>>()?,
             ),
             AllOf(l) => AllOf(
-                l
-                    .into_iter()
+                l.into_iter()
                     .map(|(c, ah)| Ok((c, find(ah)?)))
                     .collect::<Result<_, _>>()?,
             ),

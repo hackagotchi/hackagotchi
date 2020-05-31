@@ -1,8 +1,8 @@
-use rusoto_dynamodb::AttributeValue;
 use super::{Possessable, PossessionKind};
-use crate::{config, CONFIG, Item, AttributeParseError};
+use crate::{config, AttributeParseError, Item, CONFIG};
 use config::{ArchetypeHandle, ArchetypeKind};
-use serde::{Serialize, Deserialize};
+use rusoto_dynamodb::AttributeValue;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct Seed {

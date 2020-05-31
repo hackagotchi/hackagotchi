@@ -1,4 +1,4 @@
-use core::{Category, Possession, Key, market::Sale};
+use core::{market::Sale, Category, Key, Possession};
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 
 use std::env::var;
@@ -104,10 +104,7 @@ pub async fn place_on_market(
     Ok(())
 }
 
-pub async fn take_off_market(
-    db: &DynamoDbClient,
-    key: Key,
-) -> Result<(), String> {
+pub async fn take_off_market(db: &DynamoDbClient, key: Key) -> Result<(), String> {
     println!("taking {} off the market", key.id);
 
     db.update_item(rusoto_dynamodb::UpdateItemInput {

@@ -1,15 +1,15 @@
 #![feature(try_trait)]
 
-use rusoto_dynamodb::{DynamoDb, DynamoDbClient, AttributeValue};
 use humantime::{format_rfc3339, parse_rfc3339};
+use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use std::collections::HashMap;
-use std::time::SystemTime;
 use std::fmt;
+use std::time::SystemTime;
 
-pub mod market;
-pub mod config;
-pub mod possess;
 pub mod category;
+pub mod config;
+pub mod market;
+pub mod possess;
 pub mod frontend {
     pub fn emojify<S: ToString>(txt: S) -> String {
         format!(":{}:", txt.to_string().replace(" ", "_"))
@@ -17,8 +17,8 @@ pub mod frontend {
 }
 
 pub use category::{Category, CategoryError};
-pub use possess::{Possession, Possessed};
 pub use config::CONFIG;
+pub use possess::{Possessed, Possession};
 
 pub const TABLE_NAME: &'static str = "hackagotchi";
 pub type Item = HashMap<String, AttributeValue>;
@@ -71,7 +71,6 @@ impl fmt::Display for AttributeParseError {
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct Profile {
