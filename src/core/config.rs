@@ -93,6 +93,7 @@ pub struct ProfileArchetype {
 }
 
 pub type HacksteadAdvancement = Advancement<HacksteadAdvancementSum>;
+pub type HacksteadAdvancementSet = AdvancementSet<HacksteadAdvancementSum>;
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub enum HacksteadAdvancementKind {
     Land { pieces: u32 },

@@ -1,6 +1,6 @@
 use reqwest::Client;
 use core::config;
-use config::{AdvancementSet, PlantArchetype, Advancement, AdvancementSum};
+use config::{AdvancementSet, PlantArchetype, HacksteadAdvancementSet, Advancement, AdvancementSum};
 use rocket::tokio;
 use serde::{Serialize, Deserialize};
 use std::fmt;
@@ -10,6 +10,7 @@ use std::fmt;
 /// Short for "Config configuration" which is short for "configuration configuration"
 struct CConfig {
     plants: PlantCConfig,
+    hackstead_advancements_sheet_id: String
 }
 #[derive(Serialize, Deserialize, Debug)]
 struct PlantCConfig {
@@ -298,28 +299,47 @@ fn sheet_to_advancement() {
     });
 }
 
-pub async fn yank_config() -> Result<(), String> {
+pub async fn yank_config() -> Result<(), YankError> {
     use futures::stream::{self, TryStreamExt, StreamExt};
     
     let client = reqwest::Client::new();
 
-    let plant_archetypes: Vec<PlantArchetype> = stream::iter(
-            C_CONFIG.plants.include.clone()
-        )
-        .map(|plant_name| async {
-            yank_sheet(
-                &client,
-                &C_CONFIG.plants.sheet_id,
-                plant_name.clone()
+    let (plant_archetypes, hackstead_advancements): (
+        Vec<PlantArchetype>,
+        HacksteadAdvancementSet,
+    ) = futures::try_join!(
+        stream::iter(
+                C_CONFIG.plants.include.clone()
             )
-            .await?
-            .to_plant_archetype()
-            .map_err(|e| YankError::SheetError(plant_name, e))
-        })
-        .buffer_unordered(50)
-        .try_collect::<Vec<PlantArchetype>>()
-        .await
-        .map_err(|e| format!("couldn't yank plant sheet: {}", e))?;
+            .map(|plant_name| async {
+                yank_sheet(
+                    &client,
+                    &C_CONFIG.plants.sheet_id,
+                    plant_name.clone()
+                )
+                .await?
+                .to_plant_archetype()
+                .map_err(|e| YankError::SheetError(plant_name, e))
+            })
+            .buffer_unordered(50)
+            .try_collect::<Vec<PlantArchetype>>(),
+        async {
+            yank_sheet(
+                    &client,
+                    &C_CONFIG.hackstead_advancements_sheet_id,
+                    "Hackstead Advancements".to_string(),
+                )
+                .await
+                .and_then(|s| {
+                    s
+                        .to_advancements(1)
+                        .map_err(|e| YankError::SheetError(
+                            "Hackstead Advancements".to_string(),
+                            e
+                        ))
+                })
+        }
+    )?;
 
     println!("{:#?}", plant_archetypes);
 

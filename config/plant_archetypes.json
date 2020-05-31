@@ -123,7 +123,7 @@
                                         "Bread Essence"
                                     ]
                                 ],
-                                "makes": "bressence",
+                                "makes": { "Just": [1, "bressence"] },
                                 "time": 240.0,
                                 "destroys_plant": false
                             }
@@ -149,7 +149,7 @@
                                         "crystcyl"
                                     ]
                                 ],
-                                "makes": "Bread Egg",
+                                "makes": { "Just": [1, "Bread Egg"] },
                                 "time": 720.0,
                                 "destroys_plant": true
                             }
@@ -267,7 +267,7 @@
                                         "Rolling Pin"
                                     ]
                                 ],
-                                "makes": "Kingpin",
+                                "makes": { "Just": [1, "Kingpin"] },
                                 "time": 17280.0,
                                 "destroys_plant": true
                             }
@@ -401,7 +401,7 @@
                                         "Cyl Crystal"
                                     ]
                                 ],
-                                "makes": "crystcyl",
+                                "makes": { "Just": [1, "crystcyl"] },
                                 "time": 240.0,
                                 "destroys_plant": false
                             }
@@ -427,7 +427,7 @@
                                         "hacksprit"
                                     ]
                                 ],
-                                "makes": "Cyl Egg",
+                                "makes": { "Just": [1, "Cyl Egg"] },
                                 "time": 720.0,
                                 "destroys_plant": true
                             }
@@ -545,7 +545,7 @@
                                         "Cyl Wand"
                                     ]
                                 ],
-                                "makes": "Cytrus Staff",
+                                "makes": { "Just": [1, "Cytrus Staff"] },
                                 "time": 17280.0,
                                 "destroys_plant": true
                             }
@@ -679,7 +679,7 @@
                                         "Hacker Spirit"
                                     ]
                                 ],
-                                "makes": "hacksprit",
+                                "makes": { "Just": [1, "hacksprit"] },
                                 "time": 240.0,
                                 "destroys_plant": false
                             }
@@ -705,7 +705,7 @@
                                         "crystcyl"
                                     ]
                                 ],
-                                "makes": "Hacker Egg",
+                                "makes": { "Just": [1, "Hacker Egg"] },
                                 "time": 720.0,
                                 "destroys_plant": true
                             }
@@ -823,7 +823,7 @@
                                         "Vine Keyboard"
                                     ]
                                 ],
-                                "makes": "Jungleboard",
+                                "makes": { "Just": [1, "Jungleboard"] },
                                 "time": 17280.0,
                                 "destroys_plant": true
                             }
