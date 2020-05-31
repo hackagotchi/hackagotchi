@@ -48,6 +48,8 @@ pub enum SheetError {
     CellIntParsingError(&'static str, std::num::ParseIntError, usize),
     /// Contains a description of that which is missing.
     Missing(&'static str),
+    /// unspecified JSON error
+    JsonError(&'static str, serde_json::error::Error),
 }
 use SheetError::*;
 
@@ -95,6 +97,7 @@ impl fmt::Display for SheetError {
                 )
             }
             Missing(what) => write!(f, "missing {}", what),
+            JsonError(msg, e) => write!(f, "json error: {}: {}", msg, e),
         }
     }
 }
@@ -120,7 +123,8 @@ lazy_static::lazy_static! {
 #[derive(Serialize, Deserialize, Debug, Default)]
 /// A single Google Sheets Sheet.
 struct Sheet {
-    values: Vec<Vec<String>>
+    values: Vec<Vec<String>>,
+    name: String,
 }
 impl Sheet {
     /// turns a sheet into a list of advancements
@@ -163,7 +167,7 @@ impl Sheet {
         })
     }
 
-    fn to_plant_archetype(mut self, name: &'static str) -> Result<PlantArchetype, SheetError> {
+    fn to_plant_archetype(mut self) -> Result<PlantArchetype, SheetError> {
         if self.values.is_empty() {
             return Err(Missing("entire sheet"));
         }
@@ -178,7 +182,7 @@ impl Sheet {
         };
 
         Ok(PlantArchetype {
-            name: name.to_string(),
+            name: self.name.clone(),
             base_yield_duration,
             advancements: {
                 // one one is necessary because we yank out the
@@ -193,8 +197,8 @@ impl Sheet {
     }
 }
 
-async fn yank_sheet(client: &Client, id: &str, name: &str) -> Result<Sheet, YankError> {
-    client
+async fn yank_sheet(client: &Client, id: &str, name: String) -> Result<Sheet, YankError> {
+    let v: serde_json::Value = client
         .get(&format!(
             concat!(
                 "https://sheets.googleapis.com/v4/spreadsheets/{}/",
@@ -209,7 +213,23 @@ async fn yank_sheet(client: &Client, id: &str, name: &str) -> Result<Sheet, Yank
         .map_err(|e| YankError::RequestError("couldn't grab from google", e))?
         .json()
         .await
-        .map_err(|e| YankError::RequestError("Google's Sheet Json is faulty", e))
+        .map_err(|e| YankError::RequestError("Google's Sheet Json is faulty", e))?;
+
+    Ok(Sheet {
+        values: serde_json::from_value(
+            v
+                .get("values")
+                .ok_or_else(|| YankError::SheetError(name.clone(), Missing(
+                    "values field in sheet json"
+                )))?
+                .clone()
+        )
+        .map_err(|e| YankError::SheetError(name.clone(), JsonError(
+            "google sheet json has invalid values field",
+            e
+        )))?,
+        name,
+    })
 }
 
 #[tokio::test]
@@ -278,31 +298,28 @@ fn sheet_to_advancement() {
     });
 }
 
-async fn yank_config() -> Result<(), YankError> {
+pub async fn yank_config() -> Result<(), String> {
     use futures::stream::{self, TryStreamExt, StreamExt};
-    use futures::future::TryFutureExt;
-
-    dotenv::dotenv().ok();
     
     let client = reqwest::Client::new();
 
-    let plant_archetypes: Vec<PlantArchetype> = stream::iter(&C_CONFIG.plants.include)
-        .map(|plant_name| {
+    let plant_archetypes: Vec<PlantArchetype> = stream::iter(
+            C_CONFIG.plants.include.clone()
+        )
+        .map(|plant_name| async {
             yank_sheet(
                 &client,
                 &C_CONFIG.plants.sheet_id,
-                plant_name
+                plant_name.clone()
             )
-            .and_then(move |s| async move {
-                s
-                    .to_plant_archetype(plant_name)
-                    .map_err(|e| YankError::SheetError(plant_name.clone(), e))
-            })
+            .await?
+            .to_plant_archetype()
+            .map_err(|e| YankError::SheetError(plant_name, e))
         })
         .buffer_unordered(50)
-        .try_collect::<Vec<_>>()
+        .try_collect::<Vec<PlantArchetype>>()
         .await
-        .unwrap_or_else(|e| panic!("couldn't yank sheet: {}", e));
+        .map_err(|e| format!("couldn't yank plant sheet: {}", e))?;
 
     println!("{:#?}", plant_archetypes);
 

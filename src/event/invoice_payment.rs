@@ -1,3 +1,4 @@
+use super::InvoicePaymentTrigger;
 use super::prelude::*;
 
 pub struct Sale {
@@ -42,7 +43,7 @@ impl Sale {
 }
 
 lazy_static::lazy_static! {
-    pub static ref HACKMARKET_FEES: Trigger = Trigger::InvoicePayment {
+    pub static ref HACKMARKET_FEES: InvoicePaymentTrigger = InvoicePaymentTrigger {
         regex: Regex::new("hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])").unwrap(),
         then: &hackmarket_fees
     };
@@ -118,15 +119,13 @@ fn hackmarket_fees<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice: ban
 }
 
 lazy_static::lazy_static! {
-    pub static ref HACKMARKET_PURCHASE: Trigger = Trigger::InvoicePayment {
+    pub static ref HACKMARKET_PURCHASE: InvoicePaymentTrigger = InvoicePaymentTrigger {
         regex: Regex::new("hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9]) from <@([A-z|0-9]+)>").unwrap(),
         then: &hackmarket_purchase
     };
 }
 fn hackmarket_purchase<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice: banker::PaidInvoice) -> HandlerOutput<'a> {
     async move {
-        use futures::future::TryFutureExt;
-
         let Sale {
             name,
             price,
@@ -248,7 +247,7 @@ fn hackmarket_purchase<'a>(c: regex::Captures<'a>, _: Message<'a>, paid_invoice:
 }
 
 lazy_static::lazy_static! {
-    pub static ref START_HACKSTEAD_INVOICE_PAYMENT: Trigger = Trigger::InvoicePayment {
+    pub static ref START_HACKSTEAD_INVOICE_PAYMENT: InvoicePaymentTrigger = InvoicePaymentTrigger {
         regex: Regex::new("let's hackstead, fred!").unwrap(),
         then: &start_hackstead_invoice_payment
     };

@@ -1,12 +1,13 @@
+use super::SpecialUserMessageTrigger;
 use super::prelude::*;
 
 lazy_static::lazy_static! {
-    pub static ref SPAWN_COMMAND: Trigger = Trigger::SpecialUserMessage {
+    pub static ref SPAWN_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
         regex: Regex::new("<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?(([0-9]+) )?(.+)").unwrap(),
         then: &spawn_command
     };
 }
-fn spawn_command<'a>(c: regex::Captures<'a>, r: Message<'a>, _: Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn spawn_command<'a>(c: regex::Captures<'a>, r: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
     async move {
         info!("spawn possession captures: {:?}", c);
 
@@ -84,12 +85,12 @@ fn spawn_command<'a>(c: regex::Captures<'a>, r: Message<'a>, _: Sender<FarmingIn
 }
 
 lazy_static::lazy_static! {
-    pub static ref GP_DUMP_COMMAND: Trigger = Trigger::SpecialUserMessage {
+    pub static ref GP_DUMP_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
         regex: Regex::new("<@([A-z|0-9]+)> dump <@([A-z|0-9]+)> ([0-9]+)").unwrap(),
         then: &gp_dump_command
     };
 }
-fn gp_dump_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn gp_dump_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
     async move {
         let dump_to = c.get(2).ok_or_else(|| "no dump receiver".to_string())?.as_str().to_string();
         let dump_amount = c
@@ -106,14 +107,31 @@ fn gp_dump_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: Sender<Farming
     .boxed()
 }
 
+lazy_static::lazy_static! {
+    pub static ref YANK_CONFIG: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
+        regex: Regex::new("<@([A-z|0-9]+)> goblin chant").unwrap(),
+        then: &yank_config
+    };
+}
+fn yank_config<'a>(_: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+    async move {
+        banker::message(match crate::yank_config::yank_config().await {
+            Ok(()) => "goblin chanting brought forth new config from the heavens!"
+                .to_string(),
+            Err(e) => format!("goblin chanting interrupted by vile belch: {}", e),
+        })
+        .await
+    }
+    .boxed()
+}
 
 lazy_static::lazy_static! {
-    pub static ref STOMP_COMMAND: Trigger = Trigger::SpecialUserMessage {
+    pub static ref STOMP_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
         regex: Regex::new("<@([A-z|0-9]+)> goblin stomp").unwrap(),
         then: &stomp_command
     };
 }
-fn stomp_command<'a>(_: regex::Captures<'a>, _: Message<'a>, to_farming: Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn stomp_command<'a>(_: regex::Captures<'a>, _: Message<'a>, to_farming: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
     async move {
         info!("goblin_stomp time!");
 
@@ -127,33 +145,32 @@ fn stomp_command<'a>(_: regex::Captures<'a>, _: Message<'a>, to_farming: Sender<
 }
 
 lazy_static::lazy_static! {
-    pub static ref SLAUGHTER_COMMAND: Trigger = Trigger::SpecialUserMessage {
+    pub static ref SLAUGHTER_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
         regex: Regex::new("<@([A-z|0-9]+)> goblin slaughter").unwrap(),
         then: &slaughter_command
     };
 }
-fn slaughter_command<'a>(_: regex::Captures<'a>, _: Message<'a>, _: Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn slaughter_command<'a>(_: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
     async move {
         info!("goblin slaughter time!");
 
         match hacksteader::goblin_slaughter(&dyn_db()).await {
             Ok(()) => {}
             Err(e) => error!("goblin slaughter error: {}", e),
-        }
+        };
         Ok(())
     }
     .boxed()
 }
 
 lazy_static::lazy_static! {
-    pub static ref NAB_COMMAND: Trigger = Trigger::SpecialUserMessage {
+    pub static ref NAB_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
         regex: Regex::new("<@([A-z|0-9]+)> goblin nab (.+)").unwrap(),
         then: &nab_command
     };
 }
-fn nab_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn nab_command<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
     async move {
-        use futures::stream::{self, StreamExt, TryStreamExt};
         info!("goblin nab time!");
 
         let archetype_handle = CONFIG

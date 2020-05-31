@@ -1,12 +1,13 @@
 use super::prelude::*;
+use super::BankerMessageTrigger;
 
 lazy_static::lazy_static! {
-    pub static ref BANKER_BALANCE: Trigger = Trigger::BankerMessage {
+    pub static ref BANKER_BALANCE: BankerMessageTrigger = BankerMessageTrigger {
         regex: Regex::new("You have ([0-9]+)gp in your account, hackalacker.").unwrap(),
         then: &banker_balance
     };
 }
-fn banker_balance<'a>(c: regex::Captures<'a>, _: Message<'a>, _: Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
+fn banker_balance<'a>(c: regex::Captures<'a>, _: Message<'a>, _: &'a Sender<FarmingInputEvent>) -> HandlerOutput<'a> {
     async move {
 
         let balance = c
