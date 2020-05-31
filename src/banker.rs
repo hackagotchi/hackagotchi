@@ -1,7 +1,7 @@
-use super::{Message, TOKEN};
+use crate::{event::Message, TOKEN};
 use regex::Regex;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PaidInvoice {
     pub invoicer: String,
     pub amount: u64,

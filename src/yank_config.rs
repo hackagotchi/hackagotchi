@@ -1,4 +1,3 @@
-#![feature(vec_remove_item)]
 use reqwest::Client;
 use core::config;
 use config::{AdvancementSet, PlantArchetype, Advancement, AdvancementSum};
@@ -279,7 +278,6 @@ fn sheet_to_advancement() {
     });
 }
 
-#[tokio::main]
 async fn yank_config() -> Result<(), YankError> {
     use futures::stream::{self, TryStreamExt, StreamExt};
     use futures::future::TryFutureExt;
