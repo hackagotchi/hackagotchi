@@ -137,10 +137,26 @@ fn yank_config<'a>(
     _: Message<'a>,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
+    const CHANTING_DESCRIPTIONS: &'static [&'static str] = &[
+        "eerie",
+        "eldritch",
+        "rythmic",
+        "spooky",
+        "tribal",
+        "unholy",
+        "deafening",
+        "savage",
+        "canadian",
+    ];
+    use rand::seq::SliceRandom;
+
     async move {
         banker::message(match crate::yank_config::yank_config().await {
-            Ok(()) => "goblin chanting brought forth new config from the heavens!".to_string(),
-            Err(e) => format!("goblin chanting interrupted by vile belch: {}", e),
+            Ok(()) => format!(
+                "{} goblin chanting hath brought forth new config from the heavens!", 
+                CHANTING_DESCRIPTIONS.choose(&mut rand::thread_rng()).unwrap()
+            ),
+            Err(e) => format!("goblin chanting interrupted by vile belch:\n{}", e),
         })
         .await
     }
