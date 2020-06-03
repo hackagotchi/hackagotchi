@@ -85,7 +85,7 @@
         "kind": {
             "Keepsake": {
                 "unlocks_land": {
-                    "requires_xp": true
+                    "requires_xp": false
                 }
             }
         }
