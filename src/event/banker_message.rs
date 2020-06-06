@@ -48,6 +48,7 @@ fn banker_balance<'a>(
                     None
                 }
             })
+            .filter(|g| g.inner.base_happiness > 0)
             .collect::<Vec<Possessed<Gotchi>>>();
 
         let total_happiness: u64 = gotchis.iter().map(|x| x.inner.base_happiness).sum();

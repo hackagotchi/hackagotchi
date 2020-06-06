@@ -395,7 +395,7 @@ impl<P: Possessable> std::ops::Deref for Possessed<P> {
 }
 
 impl<P: Possessable> Possessed<P> {
-    fn archetype(&self) -> &Archetype {
+    pub fn archetype(&self) -> &Archetype {
         CONFIG
             .possession_archetypes
             .get(self.archetype_handle)

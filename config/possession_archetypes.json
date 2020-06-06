@@ -4,7 +4,18 @@
         "description": "A cute Hackagotchi who is into baking! She can actually only make bread, as we all know from the Great Cake Fire of '19.",
         "kind": {
             "Gotchi": {
-                "base_happiness": 3
+                "base_happiness": 3,
+                "plant_effects": [
+                    "Bractus", 
+                    {
+                        "xp": 0,
+                        "title": "Hackagotchi Help!",
+                        "description": "Having a Chefpheus increases the yield size of this Bractus 50%!",
+                        "achiever_title": "Hackagotchi Haver",
+                        "art": "bractus_loaf",
+                        "kind": { "YieldSize": 1.5 }
+                    }
+                ]
             }
         }
     },
@@ -13,7 +24,18 @@
         "description": "The boundless, buzzing, crackling energy found in Crystallis manifests itself in Gempheus's personality! That is to say, Gempheus early in the morning is a little more than most people can handle.",
         "kind": {
             "Gotchi": {
-                "base_happiness": 3
+                "base_happiness": 3,
+                "plant_effects": [
+                    "Coffea Cyl", 
+                    {
+                        "xp": 0,
+                        "title": "Hackagotchi Help!",
+                        "description": "Having a Gempheus increases the yield size of this Coffea Cyl 50%!",
+                        "achiever_title": "Hackagotchi Haver",
+                        "art": "bractus_loaf",
+                        "kind": { "YieldSize": 1.5 }
+                    }
+                ]
             }
         }
     },
@@ -22,7 +44,18 @@
         "description": "Enjoys long hacks on the beach, and thinks that posting her dating profile bio here is somehow not appropriate. You can hear less profanity from this one.",
         "kind": {
             "Gotchi": {
-                "base_happiness": 3
+                "base_happiness": 3,
+                "plant_effects": [
+                    "Hacker Vibes Vine", 
+                    {
+                        "xp": 0,
+                        "title": "Hackagotchi Help!",
+                        "description": "Having a Hackpheus increases the yield size of this Hacker Vibes Vine 50%!",
+                        "achiever_title": "Hackagotchi Haver",
+                        "art": "bractus_loaf",
+                        "kind": { "YieldSize": 1.5 }
+                    }
+                ]
             }
         }
     },
@@ -34,7 +67,7 @@
                 "item_application_effect": {
                     "TimeIncrease": {
                         "extra_cycles": 1500,
-                        "duration_cycles": 12
+                        "duration_cycles": 72
                     }
                 }
             }
@@ -48,7 +81,7 @@
                 "item_application_effect": {
                     "TimeIncrease": {
                         "extra_cycles": 15000,
-                        "duration_cycles": 12
+                        "duration_cycles": 60
                     }
                 }
             }
@@ -115,21 +148,57 @@
         "name": "Cyl Wand",
         "description": "You aren't supposed to have this yet.",
         "kind": {
-            "Keepsake": {}
+            "Keepsake": {
+                "plant_effects": [
+                    "Coffea Cyl", 
+                    {
+                        "xp": 0,
+                        "title": "Cyl Wand Bonus",
+                        "description": "Having a Cyl Wand in your inventory increases the growth/crafting speed of this Coffea Cyl 35%!",
+                        "achiever_title": "Cyl Mage",
+                        "art": "bractus_loaf",
+                        "kind": { "YieldSpeed": 1.35 }
+                    }
+                ]
+            }
         }
     },
     {
         "name": "Vine Keyboard",
         "description": "You aren't supposed to have this yet.",
         "kind": {
-            "Keepsake": {}
+            "Keepsake": {
+                "plant_effects": [
+                    "Hacker Vibes Vine", 
+                    {
+                        "xp": 0,
+                        "title": "Vine Keyboard Bonus",
+                        "description": "Having a Vine Keyboard in your inventory increases the craft/growth speed of this Hacker Vibes Vine by 35%!",
+                        "achiever_title": "Keyboard Warrior",
+                        "art": "bractus_loaf",
+                        "kind": { "YieldSpeed": 1.5 }
+                    }
+                ]
+            }
         }
     },
     {
         "name": "Rolling Pin",
         "description": "You aren't supposed to have this yet.",
         "kind": {
-            "Keepsake": {}
+            "Keepsake": {
+                "plant_effects": [
+                    "Bractus", 
+                    {
+                        "xp": 0,
+                        "title": "Rolling Pin Bonus",
+                        "description": "Having a Rolling Ping in your inventory increases the craft/growth speed of this Bractus 35%!",
+                        "achiever_title": "Bractus Baker",
+                        "art": "bractus_loaf",
+                        "kind": { "YieldSpeed": 1.5 }
+                    }
+                ]
+            }
         }
     },
     {
@@ -137,7 +206,7 @@
         "description": "Veins of pure arcane energy course throughout the egg, and holding it quickly makes your hands shaky and numb.",
         "kind": {
             "Gotchi": {
-                "base_happiness": 3
+                "base_happiness": 0
             }
         }
     },
@@ -146,7 +215,7 @@
         "description": "If you put your ear up to this egg, you can hear the sounds of a keyboard clacking. And profanity. Lots and lots of profanity...",
         "kind": {
             "Gotchi": {
-                "base_happiness": 3
+                "base_happiness": 0
             }
         }
     },
@@ -155,7 +224,7 @@
         "description": "If you knock gently on this egg, it sounds like the crisp outer shell of hardtack. Petition to change its name to 'Breagg.' No? ... okay fine.",
         "kind": {
             "Gotchi": {
-                "base_happiness": 3
+                "base_happiness": 0
             }
         }
     },

@@ -544,10 +544,12 @@ fn hackstead_blocks(
     for tile in land.into_iter() {
         if let Some(p) = tile.plant.as_ref() {
             let neighbor_bonuses = neighbor_bonuses
-                .iter()
-                .filter(|(from, ah, _)| *from != tile.id && *ah == p.archetype_handle)
-                .map(|(_, _, (bonus, _))| bonus);
-            let sum = p.advancements.sum(p.xp, neighbor_bonuses);
+                .clone()
+                .bonuses_for_plant(
+                    tile.id,
+                    p.archetype_handle
+                );
+            let sum = p.advancements.sum(p.xp, neighbor_bonuses.iter());
             let unboosted_sum = p.advancements.raw_sum(p.xp);
             let ca = p.current_advancement();
 
@@ -648,12 +650,12 @@ fn hackstead_blocks(
                 let ca = p.current_advancement();
                 let mut actions = vec![];
 
-                let applicables: Vec<Possessed<possess::Keepsake>> = inventory
+                let applicables: Vec<String> = inventory
                     .iter()
                     .cloned()
-                    .filter_map(|x| x.try_into().ok())
-                    .filter(|x: &Possessed<possess::Keepsake>| {
-                        x.inner.item_application_effect.is_some()
+                    .filter_map(|x| {
+                        x.kind.keepsake()?.item_application_effect.as_ref()?;
+                        Some(x.id.to_simple().to_string())
                     })
                     .collect();
 
@@ -838,24 +840,16 @@ fn hackstead_blocks(
 
         let total_happiness = gotchis.iter().map(|g| g.inner.base_happiness).sum::<u64>();
 
-        for gotchi in gotchis.into_iter() {
-            blocks.push(json!({
-                "type": "section",
-                "text": mrkdwn(format!("_{} ({}, {} happiness)_", emojify(&gotchi.name), gotchi.name, gotchi.inner.base_happiness)),
-                "accessory": {
-                    "type": "button",
-                    "style": "primary",
-                    "text": plain_text(&gotchi.inner.nickname),
-                    "value": serde_json::to_string(&PossessionPage {
-                        possession: gotchi.into_possession(),
-                        interactivity,
-                        credentials,
-                    }).unwrap(),
-                    "action_id": "possession_page",
-                }
-            }));
-        }
-
+        blocks.push(json!({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": plain_text("See Gotchi"),
+                "style": "primary",
+                "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
+                "action_id": "gotchi_overview",
+            }],
+        }));
         blocks.push(json!({
             "type": "section",
             "text": mrkdwn(format!("Total happiness: *{}*", total_happiness))
@@ -873,7 +867,7 @@ fn hackstead_blocks(
             "This is a read-only snapshot of <@{}>'s Hackagotchi Hackstead at a specific point in time. \
             You can manage your own Hackagotchi Hackstead in real time at your \
             <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
-            user_id,
+            &user_id,
             *APP_ID,
         )));
     }
@@ -1576,9 +1570,8 @@ async fn action_endpoint(
                         json!({
                             "type": "section",
                             "text": mrkdwn(format!(
-                                "<@{}> has been so kind as to gift you a {:?}, {} _{}_!",
+                                "<@{}> has been so kind as to gift you a {} _{}_!",
                                 user.id,
-                                key.category,
                                 emojify(&possession.name),
                                 possession.nickname()
                             ))
@@ -1705,7 +1698,7 @@ async fn action_endpoint(
 
     let output_json = match action
         .action_id
-        .or(action.name)
+        .or(action.name.clone())
         .ok_or("no action name".to_string())?
         .as_str()
     {
@@ -1727,7 +1720,7 @@ async fn action_endpoint(
                 method: "push".to_string(),
                 trigger_id: i.trigger_id,
                 callback_id: "possession_sell_modal".to_string(),
-                title: "Sell Gotchi".to_string(),
+                title: "Sell Item".to_string(),
                 private_metadata: page_json,
                 blocks: vec![
                     json!({
@@ -1737,12 +1730,12 @@ async fn action_endpoint(
                         "element": {
                             "type": "plain_text_input",
                             "action_id": "possession_sell_price_input",
-                            "placeholder": plain_text("Price Gotchi"),
+                            "placeholder": plain_text("Price Item"),
                             "initial_value": "50",
                         }
                     }),
                     json!({ "type": "divider" }),
-                    comment("As a form of confirmation, you'll get an invoice to pay before your Gotchi goes up on the market. \
+                    comment("As a form of confirmation, you'll get an invoice to pay before your Item goes up on the market. \
                         To fund Harvests and to encourage Hacksteaders to keep prices sensible, \
                         this invoice is 5% of the price of your sale \
                         rounded down to the nearest GP (meaning that sales below 20gp aren't taxed at all)."),
@@ -1767,11 +1760,11 @@ async fn action_endpoint(
                 method: "push".to_string(),
                 trigger_id: i.trigger_id,
                 callback_id: "possession_give_modal".to_string(),
-                title: "Give Gotchi".to_string(),
+                title: "Give Item".to_string(),
                 blocks: vec![json!({
                     "type": "input",
                     "block_id": "possession_give_receiver_block",
-                    "label": plain_text("Give Gotchi"),
+                    "label": plain_text("Give Item"),
                     "element": {
                         "type": "users_select",
                         "action_id": "possession_give_receiver_input",
@@ -1832,6 +1825,7 @@ async fn action_endpoint(
                 .iter()
                 .cloned()
                 .filter_map(|p| p.try_into().ok())
+                .take(40)
                 .collect();
 
             Modal {
@@ -1889,6 +1883,43 @@ async fn action_endpoint(
             .launch()
             .await?
         }
+        "gotchi_overview" => {
+            let (steader, interactivity, credentials, push):
+                (String, Interactivity, Credentials, bool) = serde_json::from_str(&action.value).unwrap();
+
+            let hs = Hacksteader::from_db(&dyn_db(), steader).await?;
+
+            let blocks = hs.gotchis.into_iter().map(|gotchi| {
+                json!({
+                    "type": "section",
+                    "text": mrkdwn(format!("_{} ({}, {} happiness)_", emojify(&gotchi.name), gotchi.name, gotchi.inner.base_happiness)),
+                    "accessory": {
+                        "type": "button",
+                        "style": "primary",
+                        "text": plain_text(&gotchi.inner.nickname),
+                        "value": serde_json::to_string(&PossessionPage {
+                            possession: gotchi.into_possession(),
+                            interactivity,
+                            credentials,
+                        }).unwrap(),
+                        "action_id": "push_possession_page",
+                    }
+                })
+            })
+            .collect();
+
+            Modal {
+                method: if push { "push" } else { "open" }.to_string(),
+                trigger_id: i.trigger_id,
+                callback_id: "crafting_confirm_modal".to_string(),
+                title: "Crafting Confirmation".to_string(),
+                private_metadata: action.value.to_string(),
+                blocks,
+                submit: None,
+            }
+            .launch()
+            .await?
+        }
         "crafting_confirm" => {
             let craft_json = &action.value;
             let (plant_id, raw_recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
@@ -1913,11 +1944,12 @@ async fn action_endpoint(
                 })?;
 
             let neighbor_bonuses = all_nb
-                .iter()
-                .filter(|(from, ah, _)| *from != plant_id && *ah == plant.archetype_handle)
-                .map(|(_, _, (bonus, _))| bonus);
+                .bonuses_for_plant(
+                    plant_id,
+                    plant.archetype_handle
+                );
 
-            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses);
+            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter());
 
             let recipe = raw_recipe
                 .lookup_handles()
@@ -2106,10 +2138,10 @@ async fn action_endpoint(
                 .ok_or_else(|| format!("no such plant!"))?;
             let all_nb = hs.neighbor_bonuses();
             let neighbor_bonuses = all_nb
-                .iter()
-                .filter(|(from, ah, _)| *from != plant_id && *ah == plant.archetype_handle)
-                .map(|(_, _, (bonus, _))| bonus)
-                .collect::<Vec<_>>();
+                .bonuses_for_plant(
+                    plant_id,
+                    plant.archetype_handle
+                );
 
             let advancements = plant
                 .advancements
@@ -2118,11 +2150,11 @@ async fn action_endpoint(
                     Neighbor(..) => false,
                     _ => true,
                 })
-                .chain(neighbor_bonuses.iter().copied())
+                .chain(neighbor_bonuses.iter())
                 .collect::<Vec<_>>();
             let sum = plant
                 .advancements
-                .sum(plant.xp, neighbor_bonuses.iter().copied());
+                .sum(plant.xp, neighbor_bonuses.iter());
             let yield_farm_cycles = plant.base_yield_duration / sum.yield_speed_multiplier;
 
             let mut blocks = vec![];
@@ -2224,8 +2256,30 @@ async fn action_endpoint(
         }
         "item_apply" => {
             use config::ApplicationEffect::*;
-            let (tile_id, applicables): (uuid::Uuid, Vec<Possessed<possess::Keepsake>>) =
+            use futures::stream::{self, StreamExt, TryStreamExt};
+
+            let (tile_id, applicable_ids): (uuid::Uuid, Vec<uuid::Uuid>) =
                 serde_json::from_str(&action.value).unwrap();
+            let db = dyn_db();
+
+            let applicables = stream::iter(applicable_ids)
+                .map(|id| hacksteader::get_possession(&db, Key::misc(id)))
+                .buffer_unordered(50)
+                .try_collect::<Vec<Possession>>()
+                .await
+                .map_err(|e| {
+                    let a = format!("couldn't get applicable: {}", e);
+                    error!("{}", a);
+                    a
+                })?
+                .into_iter()
+                .map(|x| x.try_into())
+                .collect::<Result<Vec<Possessed<possess::Keepsake>>, _>>()
+                .map_err(|e| {
+                    let a = format!("couldn't transform fetched applicable: {}", e);
+                    error!("{}", a);
+                    a
+                })?;
 
             Modal {
                 method: "open".to_string(),
@@ -2638,10 +2692,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                     };
                     let neighbor_bonuses = neighbor_bonuses
-                        .iter()
-                        .filter(|(from, ah, _)| *from != tile.id && *ah == plant.archetype_handle)
-                        .map(|(_, _, (bonus, _))| bonus)
-                        .collect::<Vec<_>>();
+                        .clone()
+                        .bonuses_for_plant(tile.id, plant.archetype_handle);
 
                     // elapsed for this plant is the base amount of time plus some extras
                     // in case something is speeding up time for this plant
@@ -2709,7 +2761,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     for _ in 0..boosted_elapsed {
                         let plant_sum = plant
                             .advancements
-                            .sum(plant.xp, neighbor_bonuses.iter().copied());
+                            .sum(plant.xp, neighbor_bonuses.iter());
 
                         plant.craft = match plant.craft.take() {
                             Some(mut craft) => {

@@ -151,7 +151,9 @@ impl Sheet {
             .values
             .into_iter()
             .enumerate()
-            .map(|(i, x)| to_advancement(x, i + row_offset))
+            .skip(row_offset)
+            // adding one because google sheets starts at 1 not 0
+            .map(|(i, x)| to_advancement(x, i + row_offset + 1))
             .collect::<Result<Vec<_>, _>>()?;
         let base_index = advancements
             .iter()
@@ -164,11 +166,11 @@ impl Sheet {
         })
     }
 
-    fn to_plant_archetype(mut self) -> Result<PlantArchetype, SheetError> {
+    fn to_plant_archetype(self) -> Result<PlantArchetype, SheetError> {
         if self.values.is_empty() {
             return Err(Missing("entire sheet"));
         }
-        let first_row = self.values.remove(0);
+        let first_row = self.values.get(0).ok_or(Missing("first row"))?;
 
         let first_cell = first_row.first().ok_or(Missing("first cell"))?;
         let base_yield_duration = {
@@ -190,12 +192,9 @@ impl Sheet {
             name: self.name.clone(),
             base_yield_duration,
             advancements: {
-                // one one is necessary because we yank out the
-                // first row (of titles) since they're mostly for the humans
-                // and we need to find the base_yield_duration
-                // another one is necessary because google sheets starts
-                // at one.
-                const PLANT_ARCHETYPE_ADVANCEMENT_ROW_OFFSET: usize = 1 + 1;
+                // because we yank out the first row (of titles) since
+                // they're mostly for the humans and we need to find the base_yield_duration
+                const PLANT_ARCHETYPE_ADVANCEMENT_ROW_OFFSET: usize = 1;
                 self.to_advancements(PLANT_ARCHETYPE_ADVANCEMENT_ROW_OFFSET)?
             },
         })

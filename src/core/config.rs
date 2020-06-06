@@ -126,6 +126,8 @@ impl AdvancementSum for HacksteadAdvancementSum {
 #[derive(Deserialize, Debug, Clone)]
 pub struct GotchiArchetype {
     pub base_happiness: u64,
+    #[serde(default)]
+    pub plant_effects: Option<(String, PlantAdvancement)>,
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct SeedArchetype {
@@ -146,6 +148,7 @@ pub struct LandUnlock {
 pub struct KeepsakeArchetype {
     pub item_application_effect: Option<ApplicationEffect>,
     pub unlocks_land: Option<LandUnlock>,
+    pub plant_effects: Option<(String, PlantAdvancement)>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
