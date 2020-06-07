@@ -2,9 +2,15 @@
 #![feature(proc_macro_hygiene)]
 #![feature(try_trait)]
 #![recursion_limit = "512"]
+use config::CONFIG;
+use core::config;
+use core::frontend::emojify;
+use core::possess;
+use core::{Category, Key};
 use crossbeam_channel::Sender;
-use hacksteader::{Category, Key};
 use log::*;
+use possess::{Possessed, Possession};
+use regex::Regex;
 use rocket::request::LenientForm;
 use rocket::tokio;
 use rocket::{post, routes, FromForm, State};
@@ -13,14 +19,15 @@ use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::convert::TryInto;
 
-mod banker;
-mod config;
-mod hacksteader;
-mod market;
+pub mod banker;
+pub mod event;
+pub mod hacksteader;
+pub mod market;
+mod yank_config;
 
-use hacksteader::{Gotchi, Hacksteader, Possessed, Possession};
+use hacksteader::Hacksteader;
 
-fn dyn_db() -> DynamoDbClient {
+pub fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(rusoto_core::Region::UsEast1)
 }
 
@@ -36,19 +43,19 @@ lazy_static::lazy_static! {
     pub static ref HACKSTEAD_PRICE: u64 = std::env::var("HACKSTEAD_PRICE").unwrap().parse().unwrap();
 }
 
-fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
+pub fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
     json!({
         "type": "mrkdwn",
         "text": txt.to_string(),
     })
 }
-fn plain_text<S: std::string::ToString>(txt: S) -> Value {
+pub fn plain_text<S: std::string::ToString>(txt: S) -> Value {
     json!({
         "type": "plain_text",
         "text": txt.to_string(),
     })
 }
-fn comment<S: ToString>(txt: S) -> Value {
+pub fn comment<S: ToString>(txt: S) -> Value {
     json!({
         "type": "context",
         "elements": [
@@ -56,14 +63,11 @@ fn comment<S: ToString>(txt: S) -> Value {
         ]
     })
 }
-fn emojify<S: ToString>(txt: S) -> String {
-    format!(":{}:", txt.to_string().replace(" ", "_"))
-}
-fn filify<S: ToString>(txt: S) -> String {
+pub fn filify<S: ToString>(txt: S) -> String {
     txt.to_string().to_lowercase().replace(" ", "_")
 }
 
-async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
+pub async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
     let o = json!({
         "channel": user_id,
         "token": *TOKEN,
@@ -85,26 +89,24 @@ async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum PossessionOverviewSource {
     Hacksteader(String),
     Market(Category),
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct PossessionOverviewPage {
     source: PossessionOverviewSource,
+    page: usize,
     item_name: String,
     interactivity: Interactivity,
     credentials: Credentials,
 }
 impl PossessionOverviewPage {
-    async fn modal(
-        self,
-        trigger_id: String,
-        private_metadata: String,
-        method: &'static str,
-    ) -> Result<Modal, String> {
+    const PAGE_SIZE: usize = 20;
+
+    async fn modal(self, trigger_id: String, method: &'static str) -> Result<Modal, String> {
         Ok(Modal {
             callback_id: self.callback_id(),
             blocks: self.blocks().await?,
@@ -112,7 +114,7 @@ impl PossessionOverviewPage {
             title: self.item_name,
             method: method.to_string(),
             trigger_id,
-            private_metadata,
+            private_metadata: String::new(),
         })
     }
 
@@ -137,37 +139,46 @@ impl PossessionOverviewPage {
         let Self {
             source,
             item_name,
+            page,
             credentials,
             interactivity,
         } = self;
 
-        let inventory = match source {
+        let inventory: Vec<_> = match source {
             PossessionOverviewSource::Hacksteader(hacksteader) => {
-                let mut hs = Hacksteader::from_db(&dyn_db(), hacksteader.clone()).await?;
-                hs.inventory
-                    .sort_unstable_by(|a, b| match (a.sale.as_ref(), b.sale.as_ref()) {
-                        (Some(a), Some(b)) => a.price.cmp(&b.price),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => std::cmp::Ordering::Equal,
-                    });
-                hs.inventory
+                let hs = Hacksteader::from_db(&dyn_db(), hacksteader.clone()).await?;
+                let mut inv: Vec<_> = hs
+                    .inventory
+                    .into_iter()
+                    .filter(|i| i.name == *item_name)
+                    .collect();
+                inv.sort_unstable_by(|a, b| match (a.sale.as_ref(), b.sale.as_ref()) {
+                    (Some(a), Some(b)) => a.price.cmp(&b.price),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                });
+                inv
             }
             PossessionOverviewSource::Market(cat) => market::market_search(&dyn_db(), *cat)
                 .await
                 .map_err(|e| error!("couldn't search market: {}", e))
                 .unwrap_or_default()
                 .into_iter()
+                .filter(|(_, i)| i.name == *item_name)
                 .map(|(sale, mut possession)| {
                     possession.sale.replace(sale);
                     possession
                 })
                 .collect(),
         };
+        // caching this so I can use it later after .into_iter() is called
+        let inventory_len = inventory.len();
 
-        Ok(inventory
+        let mut blocks = inventory
             .into_iter()
-            .filter(|i| i.name == *item_name)
+            .skip(page * Self::PAGE_SIZE)
+            .take(Self::PAGE_SIZE)
             .map(|possession| {
                 json!({
                     "type": "section",
@@ -175,7 +186,7 @@ impl PossessionOverviewPage {
                         "{} _{}_{}",
                         emojify(&item_name),
                         item_name,
-                        if let Some(market::Sale { price, .. }) = possession.sale {
+                        if let Some(core::market::Sale { price, .. }) = possession.sale {
                             match source {
                                 PossessionOverviewSource::Hacksteader(..) => {
                                     format!(" (selling at *{}gp*)", price)
@@ -209,8 +220,46 @@ impl PossessionOverviewPage {
                     }
                 })
             })
-            .take(100)
-            .collect())
+            .collect::<Vec<_>>();
+
+        let needs_back_page = *page != 0;
+        let needs_next_page = inventory_len > Self::PAGE_SIZE * (page + 1);
+        if needs_back_page || needs_next_page {
+            blocks.push(json!({
+                "type": "actions",
+                "elements": ({
+                    let mut buttons = vec![];
+                    let mut current_page = self.clone();
+
+                    if needs_back_page {
+                        let mut back_page = &mut current_page;
+                        back_page.page = *page - 1;
+                        buttons.push(json!({
+                            "type": "button",
+                            "text": plain_text("Back Page"),
+                            "style": "primary",
+                            "value": serde_json::to_string(back_page).unwrap(),
+                            "action_id": "possession_overview_page"
+                        }));
+                    }
+                    if needs_next_page {
+                        let mut next_page = &mut current_page;
+                        next_page.page = *page + 1;
+                        buttons.push(json!({
+                            "type": "button",
+                            "text": plain_text("Next Page"),
+                            "style": "primary",
+                            "value": serde_json::to_string(next_page).unwrap(),
+                            "action_id": "possession_overview_page"
+                        }));
+                    }
+
+                    buttons
+                })
+            }));
+        }
+
+        Ok(blocks)
     }
 }
 
@@ -222,7 +271,7 @@ pub struct PossessionPage {
 }
 
 impl PossessionPage {
-    fn modal(self, trigger_id: String, page_json: String, method: &'static str) -> Modal {
+    fn modal(self, trigger_id: String, method: &'static str) -> Modal {
         Modal {
             callback_id: self.callback_id(),
             blocks: self.blocks(),
@@ -230,17 +279,17 @@ impl PossessionPage {
             title: self.possession.nickname().to_string(),
             method: method.to_string(),
             trigger_id: trigger_id,
-            private_metadata: page_json,
+            private_metadata: serde_json::to_string(&self.possession.key()).unwrap(),
         }
     }
 
-    fn modal_update(self, trigger_id: String, page_json: String, view_id: String) -> ModalUpdate {
+    fn modal_update(self, trigger_id: String, view_id: String) -> ModalUpdate {
         ModalUpdate {
             callback_id: self.callback_id(),
             blocks: self.blocks(),
             submit: self.submit(),
             title: self.possession.nickname().to_string(),
-            private_metadata: page_json,
+            private_metadata: serde_json::to_string(&self.possession.key()).unwrap(),
             trigger_id,
             view_id,
             hash: None,
@@ -495,10 +544,12 @@ fn hackstead_blocks(
     for tile in land.into_iter() {
         if let Some(p) = tile.plant.as_ref() {
             let neighbor_bonuses = neighbor_bonuses
-                .iter()
-                .filter(|(from, ah, _)| *from != tile.id && *ah == p.archetype_handle)
-                .map(|(_, _, (bonus, _))| bonus);
-            let sum = p.advancements.sum(p.xp, neighbor_bonuses);
+                .clone()
+                .bonuses_for_plant(
+                    tile.id,
+                    p.archetype_handle
+                );
+            let sum = p.advancements.sum(p.xp, neighbor_bonuses.iter());
             let unboosted_sum = p.advancements.raw_sum(p.xp);
             let ca = p.current_advancement();
 
@@ -554,7 +605,7 @@ fn hackstead_blocks(
                         "type": "section",
                         "text": mrkdwn(format!(
                             "*Crafting {}*\n{}  {:.3} minutes to go",
-                            config::CONFIG
+                            CONFIG
                                 .possession_archetypes
                                 .get(craft.makes)
                                 .map(|x| x.name.as_str())
@@ -599,12 +650,12 @@ fn hackstead_blocks(
                 let ca = p.current_advancement();
                 let mut actions = vec![];
 
-                let applicables: Vec<Possessed<hacksteader::Keepsake>> = inventory
+                let applicables: Vec<String> = inventory
                     .iter()
                     .cloned()
-                    .filter_map(|x| x.try_into().ok())
-                    .filter(|x: &Possessed<hacksteader::Keepsake>| {
-                        x.inner.item_application_effect.is_some()
+                    .filter_map(|x| {
+                        x.kind.keepsake()?.item_application_effect.as_ref()?;
+                        Some(x.id.to_simple().to_string())
                     })
                     .collect();
 
@@ -631,7 +682,7 @@ fn hackstead_blocks(
                 blocks.push(comment(format!("Last Advancement: \"{}\"", ca.title)));
             }
             None => {
-                let seeds: Vec<Possessed<hacksteader::Seed>> = inventory
+                let seeds: Vec<Possessed<possess::Seed>> = inventory
                     .iter()
                     .cloned()
                     .filter_map(|p| p.try_into().ok())
@@ -762,6 +813,7 @@ fn hackstead_blocks(
                         "text": plain_text(&name),
                         "value": serde_json::to_string(&PossessionOverviewPage {
                             source: PossessionOverviewSource::Hacksteader(user_id.clone()),
+                            page: 0,
                             item_name: name,
                             interactivity,
                             credentials,
@@ -788,24 +840,16 @@ fn hackstead_blocks(
 
         let total_happiness = gotchis.iter().map(|g| g.inner.base_happiness).sum::<u64>();
 
-        for gotchi in gotchis.into_iter() {
-            blocks.push(json!({
-                "type": "section",
-                "text": mrkdwn(format!("_{} ({}, {} happiness)_", emojify(&gotchi.name), gotchi.name, gotchi.inner.base_happiness)),
-                "accessory": {
-                    "type": "button",
-                    "style": "primary",
-                    "text": plain_text(&gotchi.inner.nickname),
-                    "value": serde_json::to_string(&PossessionPage {
-                        possession: gotchi.into_possession(),
-                        interactivity,
-                        credentials,
-                    }).unwrap(),
-                    "action_id": "possession_page",
-                }
-            }));
-        }
-
+        blocks.push(json!({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": plain_text("See Gotchi"),
+                "style": "primary",
+                "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
+                "action_id": "gotchi_overview",
+            }],
+        }));
         blocks.push(json!({
             "type": "section",
             "text": mrkdwn(format!("Total happiness: *{}*", total_happiness))
@@ -823,7 +867,7 @@ fn hackstead_blocks(
             "This is a read-only snapshot of <@{}>'s Hackagotchi Hackstead at a specific point in time. \
             You can manage your own Hackagotchi Hackstead in real time at your \
             <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
-            user_id,
+            &user_id,
             *APP_ID,
         )));
     }
@@ -904,13 +948,8 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
         .map_err(|e| error!("couldn't search market: {}", e))
         .unwrap_or_default();
 
-    let (all_goods_count, all_goods_price) = (
-        sales.len(),
-        sales
-            .iter()
-            .map(|(s, _)| s.price)
-            .sum::<u64>(),
-    );
+    let (all_goods_count, all_goods_price) =
+        (sales.len(), sales.iter().map(|(s, _)| s.price).sum::<u64>());
 
     let (your_goods_count, your_goods_price) = sales
         .iter()
@@ -981,7 +1020,7 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
                 }))
                 .chain(std::iter::once(json!({ "type": "divider" })))
             })
-            .take(entry_count * 2 - 1)
+            .take(entry_count * 2 - 1),
     )
     .collect()
 }
@@ -1016,7 +1055,7 @@ async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), 
                 "gotchi" | "g" => Category::Gotchi,
                 _ => Category::Misc,
             },
-            slash_command.user_id.clone()
+            slash_command.user_id.clone(),
         )
         .await,
         submit: None,
@@ -1030,7 +1069,7 @@ async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), 
 pub async fn stateofsteading_blocks() -> Vec<Value> {
     use std::collections::HashMap;
 
-    let profiles = hacksteader::Profile::fetch_all(&dyn_db()).await.unwrap();
+    let profiles = core::Profile::fetch_all(&dyn_db()).await.unwrap();
     let tiles = hacksteader::Tile::fetch_all(&dyn_db()).await.unwrap();
 
     struct PlantEntry {
@@ -1039,10 +1078,8 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
         level: usize,
     }
 
-    let mut archetype_occurences: HashMap<
-        config::PlantArchetype,
-        Vec<PlantEntry>
-    > = Default::default();
+    let mut archetype_occurences: HashMap<config::PlantArchetype, Vec<PlantEntry>> =
+        Default::default();
 
     for tile in tiles.iter() {
         let plant = match &tile.plant {
@@ -1060,9 +1097,7 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
                     .last()
                     .map(|x| x.id.clone())
                     .unwrap_or("U013STH0TNG".to_string()),
-                level: plant
-                    .advancements
-                    .current_position(plant.xp)
+                level: plant.advancements.current_position(plant.xp),
             });
     }
 
@@ -1149,7 +1184,7 @@ async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> 
     debug!("{:#?}", slash_command);
 
     lazy_static::lazy_static! {
-        static ref HACKSTEAD: regex::Regex = regex::Regex::new(
+        static ref HACKSTEAD: Regex = Regex::new(
             "(<@([A-z0-9]+)|(.+)>)?"
         ).unwrap();
     }
@@ -1167,7 +1202,7 @@ async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> 
             Interactivity::Read,
             Credentials::None
         ),
-        "response_type": "in_channel",
+        "response_type": "ephemeral",
     }))
 }
 
@@ -1356,34 +1391,29 @@ async fn action_endpoint(
         debug!("right type!");
         let view = v.get("view").and_then(|view| {
             let parsed_view = serde_json::from_value::<View>(view.clone()).ok()?;
-            let page_json_str = &parsed_view.private_metadata;
-            let page: Option<PossessionPage> = match serde_json::from_str(&page_json_str) {
-                Ok(page) => Some(page),
+            let key_json = &parsed_view.private_metadata;
+            let key: Option<Key> = match serde_json::from_str(&key_json) {
+                Ok(k) => Some(k),
                 Err(e) => {
-                    error!("couldn't parse {}: {}", page_json_str, e);
+                    error!("couldn't parse {}: {}", key_json, e);
                     None
                 }
             };
             Some((
                 parsed_view,
-                page,
+                key,
                 v.get("trigger_id")?.as_str()?,
                 view.get("state").and_then(|s| s.get("values").cloned())?,
                 serde_json::from_value::<User>(v.get("user")?.clone()).ok()?,
             ))
         });
-        if let Some((view, Some(mut page), trigger_id, values, user)) = view {
+        if let Some((view, Some(key), trigger_id, values, user)) = view {
             debug!("view state values: {:#?}", values);
 
             match view.callback_id.as_str() {
                 "sale_removal" => {
                     info!("Revoking sale");
-                    market::take_off_market(
-                        &dyn_db(),
-                        page.possession.kind.category(),
-                        page.possession.id,
-                    )
-                    .await?;
+                    market::take_off_market(&dyn_db(), key).await?;
 
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "clear",
@@ -1391,18 +1421,19 @@ async fn action_endpoint(
                 }
                 "sale_complete" => {
                     info!("Completing sale!");
+                    let possession = hacksteader::get_possession(&dyn_db(), key).await?;
 
-                    if let Some(sale) = page.possession.sale.as_ref() {
+                    if let Some(sale) = possession.sale.as_ref() {
                         banker::invoice(
                             &user.id,
                             sale.price,
                             &format!(
                                 "hackmarket purchase buying {} at {}gp :{}:{} from <@{}>",
-                                page.possession.name,
+                                possession.name,
                                 sale.price,
-                                page.possession.id,
-                                page.possession.kind.category() as u8,
-                                page.possession.steader,
+                                key.id,
+                                key.category as u8,
+                                possession.steader,
                             ),
                         )
                         .await?;
@@ -1423,8 +1454,8 @@ async fn action_endpoint(
                 // update the nickname in the DB
                 let db = dyn_db();
                 db.update_item(rusoto_dynamodb::UpdateItemInput {
-                    table_name: hacksteader::TABLE_NAME.to_string(),
-                    key: page.possession.key().into_item(),
+                    table_name: core::TABLE_NAME.to_string(),
+                    key: key.into_item(),
                     update_expression: Some("SET nickname = :new_name".to_string()),
                     expression_attribute_values: Some(
                         [(
@@ -1443,24 +1474,32 @@ async fn action_endpoint(
                 .await
                 .map_err(|e| format!("Couldn't change nickname in database: {}", e))?;
 
-                let gotchi = page
-                    .possession
+                // TODO: parse what the above could return
+                let mut possession = hacksteader::get_possession(&db, key).await?;
+
+                let gotchi = possession
                     .kind
                     .gotchi_mut()
                     .ok_or("can only nickname gotchi".to_string())?;
 
                 // update the nickname on the Gotchi,
                 gotchi.nickname = nickname.clone();
-                let page_json = serde_json::to_string(&page).unwrap();
+
+                let page = PossessionPage {
+                    credentials: Credentials::Owner,
+                    interactivity: Interactivity::Write,
+                    possession,
+                };
 
                 // update the page in the background with the new gotchi data
-                page.modal_update(trigger_id.to_string(), page_json, view.root_view_id)
+                page.modal_update(trigger_id.to_string(), view.root_view_id)
                     .launch()
                     .await?;
 
                 // update the home tab
-                // TODO: make this not read from the database
-                update_user_home_tab(user.id.clone()).await?;
+                to_farming
+                    .send(FarmingInputEvent::ActivateUser(user.id.clone()))
+                    .unwrap();
 
                 // this will close the "enter nickname" modal
                 return Ok(ActionResponse::Ok(()));
@@ -1471,15 +1510,17 @@ async fn action_endpoint(
                 .and_then(|x| x.as_str())
                 .and_then(|s| s.parse::<u64>().ok())
             {
+                let possession = hacksteader::get_possession(&dyn_db(), key).await?;
+
                 banker::invoice(
                     &user.id,
                     price / 20_u64,
                     &format!(
                         "hackmarket fees for selling {} at {}gp :{}:{}",
-                        page.possession.name,
+                        possession.name,
                         price,
-                        page.possession.id,
-                        page.possession.kind.category() as u8
+                        possession.id,
+                        possession.kind.category() as u8
                     ),
                 )
                 .await?;
@@ -1510,8 +1551,8 @@ async fn action_endpoint(
                 Hacksteader::transfer_possession(
                     &dyn_db(),
                     new_owner.clone(),
-                    hacksteader::Acquisition::Trade,
-                    &mut page.possession,
+                    possess::Acquisition::Trade,
+                    key,
                 )
                 .await
                 .map_err(|e| e)?;
@@ -1520,6 +1561,8 @@ async fn action_endpoint(
                 // TODO: make this not read from the database
                 update_user_home_tab(user.id.clone()).await?;
 
+                let possession = hacksteader::get_possession(&dyn_db(), key).await?;
+
                 // DM the new_owner about their new acquisition!
                 dm_blocks(new_owner.clone(), {
                     // TODO: with_capacity optimization
@@ -1527,20 +1570,23 @@ async fn action_endpoint(
                         json!({
                             "type": "section",
                             "text": mrkdwn(format!(
-                                "<@{}> has been so kind as to gift you a {:?}, {} _{}_!",
+                                "<@{}> has been so kind as to gift you a {} _{}_!",
                                 user.id,
-                                page.possession.kind.category(),
-                                emojify(&page.possession.name),
-                                page.possession.nickname()
+                                emojify(&possession.name),
+                                possession.nickname()
                             ))
                         }),
                         json!({ "type": "divider" }),
                     ];
-                    page.interactivity = Interactivity::Read;
+                    let page = PossessionPage {
+                        interactivity: Interactivity::Read,
+                        credentials: Credentials::Owner,
+                        possession,
+                    };
                     blocks.append(&mut page.blocks());
                     blocks.push(json!({ "type": "divider" }));
                     blocks.push(comment(format!(
-                        "Manage all of your Hackagotchi at your <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>",
+                        "Manage all of your possessions like this one at your <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>",
                         *APP_ID,
                     )));
                     blocks
@@ -1556,10 +1602,8 @@ async fn action_endpoint(
 
             match view.callback_id.as_str() {
                 "crafting_confirm_modal" => {
-                    let (tile_id, recipe): (
-                        uuid::Uuid,
-                        config::Recipe<config::ArchetypeHandle>
-                    ) = serde_json::from_str(&view.private_metadata).unwrap();
+                    let (tile_id, recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
+                        serde_json::from_str(&view.private_metadata).unwrap();
 
                     to_farming
                         .send(FarmingInputEvent::BeginCraft { tile_id, recipe })
@@ -1569,7 +1613,7 @@ async fn action_endpoint(
                         "response_action": "clear",
                     }))));
                 }
-                _ => {},
+                _ => {}
             };
 
             if let Some((tile_id, seed_id)) = values
@@ -1654,7 +1698,7 @@ async fn action_endpoint(
 
     let output_json = match action
         .action_id
-        .or(action.name)
+        .or(action.name.clone())
         .ok_or("no action name".to_string())?
         .as_str()
     {
@@ -1676,7 +1720,7 @@ async fn action_endpoint(
                 method: "push".to_string(),
                 trigger_id: i.trigger_id,
                 callback_id: "possession_sell_modal".to_string(),
-                title: "Sell Gotchi".to_string(),
+                title: "Sell Item".to_string(),
                 private_metadata: page_json,
                 blocks: vec![
                     json!({
@@ -1686,12 +1730,12 @@ async fn action_endpoint(
                         "element": {
                             "type": "plain_text_input",
                             "action_id": "possession_sell_price_input",
-                            "placeholder": plain_text("Price Gotchi"),
+                            "placeholder": plain_text("Price Item"),
                             "initial_value": "50",
                         }
                     }),
                     json!({ "type": "divider" }),
-                    comment("As a form of confirmation, you'll get an invoice to pay before your Gotchi goes up on the market. \
+                    comment("As a form of confirmation, you'll get an invoice to pay before your Item goes up on the market. \
                         To fund Harvests and to encourage Hacksteaders to keep prices sensible, \
                         this invoice is 5% of the price of your sale \
                         rounded down to the nearest GP (meaning that sales below 20gp aren't taxed at all)."),
@@ -1703,36 +1747,38 @@ async fn action_endpoint(
             .await?
         }
         "possession_give" => {
-            let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;
-            let page: PossessionPage = serde_json::from_str(&page_json).map_err(|e| {
-                let a = format!("couldn't parse {}: {}", page_json, e);
+            let key_json = i.view.ok_or("no view!".to_string())?.private_metadata;
+            let key: Key = serde_json::from_str(&key_json).map_err(|e| {
+                let a = format!("couldn't parse {}: {}", key_json, e);
                 error!("{}", a);
                 a
             })?;
+
+            let possession = hacksteader::get_possession(&dyn_db(), key).await?;
 
             Modal {
                 method: "push".to_string(),
                 trigger_id: i.trigger_id,
                 callback_id: "possession_give_modal".to_string(),
-                title: "Give Gotchi".to_string(),
+                title: "Give Item".to_string(),
                 blocks: vec![json!({
                     "type": "input",
                     "block_id": "possession_give_receiver_block",
-                    "label": plain_text("Give Gotchi"),
+                    "label": plain_text("Give Item"),
                     "element": {
                         "type": "users_select",
                         "action_id": "possession_give_receiver_input",
                         "placeholder": plain_text("Who Really Gets your Gotchi?"),
                         "initial_user": ({
-                            let s = &config::CONFIG.special_users;
-                            &s.get(page_json.len() % s.len()).unwrap_or(&*ID)
+                            let s = &CONFIG.special_users;
+                            &s.get(key_json.len() % s.len()).unwrap_or(&*ID)
                         }),
                         "confirm": {
                             "title": plain_text("You sure?"),
                             "text": mrkdwn(format!(
                                 "Are you sure you want to give away {} _{}_? You might not get them back. :frowning:",
-                                emojify(&page.possession.name),
-                                page.possession.nickname()
+                                emojify(&possession.name),
+                                possession.nickname()
                             )),
                             "confirm": plain_text("Give!"),
                             "deny": plain_text("No!"),
@@ -1740,7 +1786,7 @@ async fn action_endpoint(
                         }
                     }
                 })],
-                private_metadata: page_json,
+                private_metadata: key_json,
                 submit: Some("Trade Away!".to_string()),
                 ..Default::default()
             }
@@ -1774,11 +1820,12 @@ async fn action_endpoint(
                     return Err(a);
                 }
             };
-            let seeds: Vec<Possessed<hacksteader::Seed>> = hs
+            let seeds: Vec<Possessed<possess::Seed>> = hs
                 .inventory
                 .iter()
                 .cloned()
                 .filter_map(|p| p.try_into().ok())
+                .take(40)
                 .collect();
 
             Modal {
@@ -1796,7 +1843,7 @@ async fn action_endpoint(
                         "placeholder": plain_text("Which seed do ya wanna plant?"),
                         "action_id": "seed_plant_select",
                         // show them each seed they have that grows a given plant
-                        "option_groups": config::CONFIG
+                        "option_groups": CONFIG
                             .plant_archetypes
                             .iter()
                             .filter_map(|pa| { // plant archetype
@@ -1836,14 +1883,78 @@ async fn action_endpoint(
             .launch()
             .await?
         }
+        "gotchi_overview" => {
+            let (steader, interactivity, credentials, push):
+                (String, Interactivity, Credentials, bool) = serde_json::from_str(&action.value).unwrap();
+
+            let hs = Hacksteader::from_db(&dyn_db(), steader).await?;
+
+            let blocks = hs.gotchis.into_iter().map(|gotchi| {
+                json!({
+                    "type": "section",
+                    "text": mrkdwn(format!("_{} ({}, {} happiness)_", emojify(&gotchi.name), gotchi.name, gotchi.inner.base_happiness)),
+                    "accessory": {
+                        "type": "button",
+                        "style": "primary",
+                        "text": plain_text(&gotchi.inner.nickname),
+                        "value": serde_json::to_string(&PossessionPage {
+                            possession: gotchi.into_possession(),
+                            interactivity,
+                            credentials,
+                        }).unwrap(),
+                        "action_id": "push_possession_page",
+                    }
+                })
+            })
+            .collect();
+
+            Modal {
+                method: if push { "push" } else { "open" }.to_string(),
+                trigger_id: i.trigger_id,
+                callback_id: "crafting_confirm_modal".to_string(),
+                title: "Crafting Confirmation".to_string(),
+                private_metadata: action.value.to_string(),
+                blocks,
+                submit: None,
+            }
+            .launch()
+            .await?
+        }
         "crafting_confirm" => {
             let craft_json = &action.value;
-            let (_, raw_recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
+            let (plant_id, raw_recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
                 serde_json::from_str(&craft_json).unwrap();
+
+            let hs = Hacksteader::from_db(&dyn_db(), i.user.id.clone()).await?;
+            let all_nb = hs.neighbor_bonuses();
+            let plant = hs
+                .land
+                .into_iter()
+                .find(|t| t.id == plant_id)
+                .ok_or_else(|| {
+                    let e = format!("no tile with id {} for this user {} ", plant_id, i.user.id);
+                    error!("{}", e);
+                    e
+                })?
+                .plant
+                .ok_or_else(|| {
+                    let e = format!("can't craft on tile {}; it's not a plant", plant_id);
+                    error!("{}", e);
+                    e
+                })?;
+
+            let neighbor_bonuses = all_nb
+                .bonuses_for_plant(
+                    plant_id,
+                    plant.archetype_handle
+                );
+
+            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter());
 
             let recipe = raw_recipe
                 .lookup_handles()
                 .ok_or_else(|| "invalid recipe".to_string())?;
+            let possible_output = recipe.makes.any();
 
             Modal {
                 method: "push".to_string(),
@@ -1851,48 +1962,45 @@ async fn action_endpoint(
                 callback_id: "crafting_confirm_modal".to_string(),
                 title: "Crafting Confirmation".to_string(),
                 private_metadata: craft_json.to_string(),
-                blocks: vec![
-                    json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            concat!(
-                                "Are you sure you want your plant to ",
-                                "spend the next {} minutes crafting a ",
-                                "{} _{}_ using\n{}\n{}",
-                            ),
-                            recipe.time / FARM_CYCLES_PER_MIN as f32,
-                            emojify(&recipe.makes.name),
-                            recipe.makes.name,
-                            recipe
-                                .needs
-                                .iter()
-                                .map(|(n, what)| {
-                                    format!(
-                                        "*{}* {} _{}_",
-                                        n,
-                                        emojify(&what.name),
-                                        what.name
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                            if recipe.destroys_plant {
-                                "WARNING: THIS WILL DESTROY YOUR PLANT"
-                            } else {
-                                ""
-                            }
-                        )),
-                        "accessory": {
-                            "type": "image",
-                            "image_url": format!("http://{}/gotchi/img/{}/{}.png",
-                                *URL,
-                                recipe.makes.kind.category(),
-                                filify(&recipe.makes.name)
-                            ),
-                            "alt_text": "The thing you'd like to craft",
+                blocks: vec![json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        concat!(
+                            "Are you sure you want your plant to ",
+                            "spend the next {:.2} minutes crafting {}",
+                            "using\n{}\n{}",
+                        ),
+                        (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
+                        recipe.makes,
+                        recipe
+                            .needs
+                            .iter()
+                            .map(|(n, what)| {
+                                format!(
+                                    "*{}* {} _{}_",
+                                    n,
+                                    emojify(&what.name),
+                                    what.name
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        if recipe.destroys_plant {
+                            "WARNING: THIS WILL DESTROY YOUR PLANT"
+                        } else {
+                            ""
                         }
-                    })
-                ],
+                    )),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!("http://{}/gotchi/img/{}/{}.png",
+                            *URL,
+                            possible_output.kind.category(),
+                            filify(&possible_output.name)
+                        ),
+                        "alt_text": "The thing you'd like to craft",
+                    }
+                })],
                 submit: Some("Craft!".to_string()),
             }
             .launch()
@@ -1921,14 +2029,15 @@ async fn action_endpoint(
                         .lookup_handles()
                         .expect("invalid archetype handle");
                     let mut b = Vec::with_capacity(recipe.needs.len() + 2);
+                    let possible_output = recipe.makes.any();
 
                     let mut head = json!({
                         "type": "section",
                         "text": mrkdwn(format!(
                             "{} *{}*\n_{}_",
-                            emojify(&recipe.makes.name),
-                            recipe.makes.name,
-                            recipe.makes.description
+                            emojify(&possible_output.name),
+                            possible_output.name,
+                            possible_output.description
                         )),
                     });
                     if possible && tile.steader == i.user.id {
@@ -1937,7 +2046,7 @@ async fn action_endpoint(
                             json!({
                                 "type": "button",
                                 "style": "primary",
-                                "text": plain_text(format!("Craft {}", recipe.makes.name)),
+                                "text": plain_text(format!("Craft {}", possible_output.name)),
                                 "value": serde_json::to_string(&(
                                     &tile_id,
                                     raw_recipe,
@@ -1977,7 +2086,7 @@ async fn action_endpoint(
         "levels" => {
             let (ah, xp): (config::ArchetypeHandle, u64) =
                 serde_json::from_str(&action.value).unwrap();
-            let arch = config::CONFIG
+            let arch = CONFIG
                 .plant_archetypes
                 .get(ah)
                 .ok_or_else(|| format!("invalid archetype handle: {}", ah))?;
@@ -2029,10 +2138,10 @@ async fn action_endpoint(
                 .ok_or_else(|| format!("no such plant!"))?;
             let all_nb = hs.neighbor_bonuses();
             let neighbor_bonuses = all_nb
-                .iter()
-                .filter(|(from, ah, _)| *from != plant_id && *ah == plant.archetype_handle)
-                .map(|(_, _, (bonus, _))| bonus)
-                .collect::<Vec<_>>();
+                .bonuses_for_plant(
+                    plant_id,
+                    plant.archetype_handle
+                );
 
             let advancements = plant
                 .advancements
@@ -2041,11 +2150,11 @@ async fn action_endpoint(
                     Neighbor(..) => false,
                     _ => true,
                 })
-                .chain(neighbor_bonuses.iter().copied())
+                .chain(neighbor_bonuses.iter())
                 .collect::<Vec<_>>();
             let sum = plant
                 .advancements
-                .sum(plant.xp, neighbor_bonuses.iter().copied());
+                .sum(plant.xp, neighbor_bonuses.iter());
             let yield_farm_cycles = plant.base_yield_duration / sum.yield_speed_multiplier;
 
             let mut blocks = vec![];
@@ -2110,7 +2219,7 @@ async fn action_endpoint(
                 "text": mrkdwn("*Yield Items*".to_string())
             }));
             for &(config::SpawnRate(guard, (lo, hi)), ah) in sum.yields.iter() {
-                let arch = match config::CONFIG.possession_archetypes.get(ah) {
+                let arch = match CONFIG.possession_archetypes.get(ah) {
                     Some(arch) => arch,
                     None => {
                         error!("unknown arch in yield {}", ah);
@@ -2147,8 +2256,30 @@ async fn action_endpoint(
         }
         "item_apply" => {
             use config::ApplicationEffect::*;
-            let (tile_id, applicables): (uuid::Uuid, Vec<Possessed<hacksteader::Keepsake>>) =
+            use futures::stream::{self, StreamExt, TryStreamExt};
+
+            let (tile_id, applicable_ids): (uuid::Uuid, Vec<uuid::Uuid>) =
                 serde_json::from_str(&action.value).unwrap();
+            let db = dyn_db();
+
+            let applicables = stream::iter(applicable_ids)
+                .map(|id| hacksteader::get_possession(&db, Key::misc(id)))
+                .buffer_unordered(50)
+                .try_collect::<Vec<Possession>>()
+                .await
+                .map_err(|e| {
+                    let a = format!("couldn't get applicable: {}", e);
+                    error!("{}", a);
+                    a
+                })?
+                .into_iter()
+                .map(|x| x.try_into())
+                .collect::<Result<Vec<Possessed<possess::Keepsake>>, _>>()
+                .map_err(|e| {
+                    let a = format!("couldn't transform fetched applicable: {}", e);
+                    error!("{}", a);
+                    a
+                })?;
 
             Modal {
                 method: "open".to_string(),
@@ -2229,16 +2360,13 @@ async fn action_endpoint(
                 } else {
                     Credentials::None
                 },
+                page: 0,
                 interactivity: Interactivity::Buy,
                 source: PossessionOverviewSource::Market(cat),
                 item_name,
             };
 
-            let page_json = serde_json::to_string(&page).unwrap();
-            page.modal(i.trigger_id, String::new(), "push")
-                .await?
-                .launch()
-                .await?
+            page.modal(i.trigger_id, "push").await?.launch().await?
         }
         "push_possession_page" => {
             let page_json = action.value;
@@ -2248,7 +2376,7 @@ async fn action_endpoint(
                 page.credentials = Credentials::Owner;
             }
 
-            page.modal(i.trigger_id, page_json, "push").launch().await?
+            page.modal(i.trigger_id, "push").launch().await?
         }
         "possession_page" => {
             let page_json = action.value;
@@ -2258,16 +2386,13 @@ async fn action_endpoint(
                 page.credentials = Credentials::Owner;
             }
 
-            page.modal(i.trigger_id, page_json, "open").launch().await?
+            page.modal(i.trigger_id, "open").launch().await?
         }
         "possession_overview_page" => {
             let page_json = action.value;
             let page: PossessionOverviewPage = serde_json::from_str(&page_json).unwrap();
 
-            page.modal(i.trigger_id, page_json, "open")
-                .await?
-                .launch()
-                .await?
+            page.modal(i.trigger_id, "open").await?.launch().await?
         }
         _ => mrkdwn("huh?"),
     };
@@ -2275,611 +2400,9 @@ async fn action_endpoint(
     Ok(ActionResponse::Json(Json(output_json)))
 }
 
-#[derive(serde::Deserialize, Debug)]
-struct ChallengeEvent {
-    challenge: String,
-}
-#[post("/event", format = "application/json", data = "<event_data>", rank = 2)]
-async fn challenge(event_data: Json<ChallengeEvent>) -> String {
-    info!("challenge");
-    event_data.challenge.clone()
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct Event<'a> {
-    #[serde(borrow, rename = "event")]
-    reply: Message<'a>,
-}
-#[derive(serde::Deserialize, Debug, Clone)]
-pub struct Message<'a> {
-    #[serde(rename = "user")]
-    user_id: String,
-    channel: String,
-    #[serde(default)]
-    text: String,
-    #[serde(rename = "type")]
-    kind: &'a str,
-    tab: Option<&'a str>,
-}
-
-#[post("/event", format = "application/json", data = "<e>", rank = 1)]
-async fn event(
-    to_farming: State<'_, Sender<FarmingInputEvent>>,
-    e: Json<Event<'_>>,
-) -> Result<(), String> {
-    use config::CONFIG;
-
-    let Event { reply: r } = (*e).clone();
-    debug!("{:#?}", r);
-
-    lazy_static::lazy_static! {
-        static ref SPAWN_POSSESSION: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?(([0-9]+) )?(.+)"
-        ).unwrap();
-        static ref DUMP_GP: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> dump <@([A-z|0-9]+)> ([0-9]+)"
-        ).unwrap();
-        static ref GOBLIN_STAMP: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> goblin stomp"
-        ).unwrap();
-        static ref GOBLIN_SLAUGHTER: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> goblin slaughter"
-        ).unwrap();
-        static ref GOBLIN_NAB: regex::Regex = regex::Regex::new(
-            "<@([A-z|0-9]+)> goblin nab (.+)"
-        ).unwrap();
-        static ref MARKET_FEES_INVOICE: regex::Regex = regex::Regex::new(
-            "hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])",
-        ).unwrap();
-        static ref MARKET_PURCHASE: regex::Regex = regex::Regex::new(
-            "hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9]) from <@([A-z|0-9]+)>",
-        ).unwrap();
-        static ref BALANCE_REPORT: regex::Regex = regex::Regex::new(
-            "You have ([0-9]+)gp in your account, hackalacker."
-        ).unwrap();
-    }
-
-    // TODO: clean these three mofos up
-    if let Message {
-        kind: "app_home_opened",
-        tab: Some("home"),
-        ref user_id,
-        ..
-    } = r
-    {
-        info!("Rendering app_home!");
-        to_farming
-            .send(FarmingInputEvent::ActivateUser(user_id.clone()))
-            .expect("couldn't send active user");
-        update_user_home_tab(user_id.clone()).await?;
-    } else if let Some(paid_invoice) =
-        banker::parse_paid_invoice(&r).filter(|pi| pi.invoicer == *ID)
-    {
-        info!("invoice {:#?} just paid", paid_invoice);
-
-        struct Sale {
-            name: String,
-            price: u64,
-            id: uuid::Uuid,
-            category: Category,
-            from: Option<String>,
-        }
-
-        fn captures_to_sale(captures: &regex::Captures) -> Option<Sale> {
-            Some(Sale {
-                name: captures.get(1)?.as_str().to_string(),
-                price: captures.get(2)?.as_str().parse().ok()?,
-                id: uuid::Uuid::parse_str(captures.get(3)?.as_str()).ok()?,
-                category: captures
-                    .get(4)?
-                    .as_str()
-                    .parse::<u8>()
-                    .ok()?
-                    .try_into()
-                    .ok()?,
-                from: captures.get(5).map(|x| x.as_str().to_string()),
-            })
-        }
-
-        if paid_invoice.reason == "let's hackstead, fred!" {
-            if !hacksteader::exists(&dyn_db(), r.user_id.clone()).await {
-                Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee.clone())
-                    .await
-                    .map_err(|_| "Couldn't put you in the hacksteader database!")?;
-
-                dm_blocks(paid_invoice.invoicee.clone(), vec![
-                     json!({
-                         "type": "section",
-                         "text": mrkdwn(
-                             "Congratulations, new Hacksteader! \
-                             Welcome to the community!\n\n\
-                             :house: Manage your hackstead in the home tab above\n\
-                             :harder-flex: Show anyone a snapshot of your hackstead with /hackstead\n\
-                             :sleuth_or_spy: Look up anyone else's hackstead with /hackstead @<their name>\n\
-                             :money_with_wings: Shop from the user-run hacksteaders' market with /hackmarket\n\n\
-                             You might want to start by buying some seeds there and planting them at your hackstead!"
-                         ),
-                     }),
-                     comment("LET'S HACKSTEAD, FRED!")
-                ]).await?;
-            }
-        } else if let Some(Sale {
-            name,
-            price,
-            id,
-            category,
-            ..
-        }) = MARKET_FEES_INVOICE
-            .captures(&paid_invoice.reason)
-            .and_then(|c| captures_to_sale(&c))
-        {
-            let db = dyn_db();
-            let key = Key { category, id };
-            let possession = hacksteader::get_possession(&db, key).await?;
-            match possession.sale {
-                None => {
-                    futures::try_join!(
-                        market::place_on_market(&db, category, id, price, name.clone()),
-                        market::log_blocks(vec![
-                            json!({
-                                "type": "section",
-                                "text": mrkdwn(format!(
-                                    "A *{}* has gone up for sale! \
-                                    <@{}> is selling it on the hackmarket for *{} GP*!",
-                                    name, paid_invoice.invoicee, price
-                                )),
-                                "accessory": {
-                                    "type": "image",
-                                    "image_url": format!("http://{}/gotchi/img/{}/{}.png", *URL, category, filify(&name)),
-                                    "alt_text": "Hackpheus sitting on bags of money!",
-                                }
-                            }),
-                            comment("QWIK U BETTR BYE ET B4 SUM1 EYLS"),
-                        ]),
-                    )
-                    .map(|_| ())
-                }
-                Some(_) => banker::pay(
-                    possession.steader.clone(),
-                    price / 20,
-                    format!("the {} you tried to sell is already up for sale", name)
-                )
-                .await
-            }?;
-
-        //banker::balance().await?;
-        } else if let Some(Sale {
-            id,
-            category,
-            name,
-            price,
-            from: Some(seller),
-        }) = MARKET_PURCHASE
-            .captures(&paid_invoice.reason)
-            .and_then(|c| captures_to_sale(&c))
-        {
-            use futures::future::TryFutureExt;
-            tokio::time::delay_for(std::time::Duration::from_secs(1)).await;
-
-            let db = dyn_db();
-            let key = hacksteader::Key { category, id };
-            match hacksteader::get_possession(&db, key).await?.sale {
-                Some(sale) => sale,
-                None => {
-                    banker::pay(
-                        paid_invoice.invoicee.clone(),
-                        price,
-                        format!("the {} you tried to buy has already been sold", name),
-                    )
-                    .await?;
-                    return Ok(());
-                }
-            };
-
-            let paid_for = format!("sale of your {}", name);
-            futures::try_join!(
-                db.update_item(rusoto_dynamodb::UpdateItemInput {
-                    key: [
-                        ("cat".to_string(), category.into_av()),
-                        (
-                            "id".to_string(),
-                            AttributeValue {
-                                s: Some(id.to_string()),
-                                ..Default::default()
-                            },
-                        ),
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect(),
-                    expression_attribute_values: Some([
-                        (":new_owner".to_string(), AttributeValue {
-                            s: Some(paid_invoice.invoicee.clone()),
-                            ..Default::default()
-                        }),
-                        (":ownership_entry".to_string(), AttributeValue {
-                            l: Some(vec![hacksteader::Owner {
-                                id: paid_invoice.invoicee.clone(),
-                                acquisition: hacksteader::Acquisition::Purchase {
-                                    price: paid_invoice.amount,
-                                }
-                            }.into()]),
-                            ..Default::default()
-                        })
-                    ].iter().cloned().collect()),
-                    update_expression: Some(concat!(
-                        "REMOVE price, market_name ",
-                        "SET steader = :new_owner, ownership_log = list_append(ownership_log, :ownership_entry)"
-                    ).to_string()),
-                    table_name: hacksteader::TABLE_NAME.to_string(),
-                    ..Default::default()
-                }).map_err(|e| format!("database err: {}", e)),
-                banker::pay(seller.clone(), price, paid_for),
-                market::log_blocks(vec![
-                    json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            "The sale of a *{}* has gone through! \
-                            <@{}> made the purchase on hackmarket, earning <@{}> *{} GP*!",
-                            name, paid_invoice.invoicee, seller, price
-                        )),
-                        "accessory": {
-                            "type": "image",
-                            "image_url": format!("http://{}/gotchi/img/{}/{}.png", *URL, category, filify(&name)),
-                            "alt_text": "Hackpheus sitting on bags of money!",
-                        }
-                    }),
-                    comment("U NO GET 2 BYE DAT 1"),
-                ]),
-                dm_blocks(seller.clone(), vec![
-                    json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            "The sale of your *{}* has gone through! \
-                            <@{}> made the purchase on hackmarket, earning you *{} GP*!",
-                            name, paid_invoice.invoicee, price
-                        )),
-                        "accessory": {
-                            "type": "image",
-                            "image_url": format!("http://{}/gotchi/img/{}/{}.png", *URL, category, filify(&name)),
-                            "alt_text": "Hackpheus sitting on bags of money!",
-                        }
-                    }),
-                    comment("BRUH UR LIKE ROLLING IN CASH"),
-                ])
-            )
-            .map_err(|e| {
-                let a = format!("Couldn't complete sale of {}: {}", id, e);
-                error!("{}", a);
-                a
-            })?;
-        }
-    }
-    if let Some(balance) = BALANCE_REPORT
-        .captures(&r.text)
-        .filter(|_| r.channel == *banker::CHAT_ID)
-        .and_then(|x| x.get(1))
-        .and_then(|x| x.as_str().parse::<u64>().ok())
-    {
-        use futures::future::TryFutureExt;
-        use futures::stream::{self, StreamExt, TryStreamExt};
-        info!("I got {} problems and GP ain't one", balance);
-
-        let query = dyn_db()
-            .query(rusoto_dynamodb::QueryInput {
-                table_name: hacksteader::TABLE_NAME.to_string(),
-                key_condition_expression: Some("cat = :gotchi_cat".to_string()),
-                expression_attribute_values: Some({
-                    [(":gotchi_cat".to_string(), Category::Gotchi.into_av())]
-                        .iter()
-                        .cloned()
-                        .collect()
-                }),
-                ..Default::default()
-            })
-            .await;
-
-        let gotchis = query
-            .map_err(|e| format!("couldn't query all gotchis: {}", e))?
-            .items
-            .ok_or("no gotchis found!")?
-            .iter()
-            .filter_map(|i| match Possession::from_item(i) {
-                Ok(p) => Some(Possessed::<Gotchi>::from_possession(p).unwrap()),
-                Err(e) => {
-                    error!("error parsing gotchi: {}", e);
-                    None
-                }
-            })
-            .collect::<Vec<Possessed<Gotchi>>>();
-
-        let total_happiness: u64 = gotchis.iter().map(|x| x.inner.base_happiness).sum();
-        let mut funds_awarded = 0;
-
-        for _ in 0..balance / total_happiness {
-            stream::iter(gotchis.clone()).map(|x| Ok(x)).try_for_each_concurrent(None, |gotchi| {
-                let dm = vec![
-                    json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            "_It's free GP time, ladies and gentlegotchis!_\n\n\
-                            It seems your lovely Gotchi *{}* has collected *{} GP* for you!",
-                            gotchi.inner.nickname,
-                            gotchi.inner.base_happiness
-                        )),
-                        "accessory": {
-                            "type": "image",
-                            "image_url": format!("http://{}/gotchi/img/{}/{}.png", *URL, Category::Gotchi, filify(&gotchi.name)),
-                            "alt_text": "Hackpheus holding a Gift!",
-                        }
-                    }),
-                    comment("IN HACK WE STEAD")
-                ];
-                let payment_note = format!(
-                    "{} collected {} GP for you",
-                    gotchi.inner.nickname,
-                    gotchi.inner.base_happiness,
-                );
-                let steader_in_harvest_log: bool = gotchi.inner.harvest_log.last().filter(|x| x.id == gotchi.steader).is_some();
-                let db_update = rusoto_dynamodb::UpdateItemInput {
-                    table_name: hacksteader::TABLE_NAME.to_string(),
-                    key: gotchi.clone().into_possession().key().into_item(),
-                    update_expression: Some(if steader_in_harvest_log {
-                        format!("ADD harvest_log[{}].harvested :harv", gotchi.inner.harvest_log.len() - 1)
-                    } else {
-                        "SET harvest_log = list_append(harvest_log, :harv)".to_string()
-                    }),
-                    expression_attribute_values: Some(
-                        [(
-                            ":harv".to_string(),
-                            if steader_in_harvest_log {
-                                AttributeValue {
-                                    n: Some(gotchi.inner.base_happiness.to_string()),
-                                    ..Default::default()
-                                }
-                            } else {
-                                AttributeValue {
-                                    l: Some(vec![hacksteader::GotchiHarvestOwner {
-                                        id: gotchi.steader.clone(),
-                                        harvested: gotchi.inner.base_happiness,
-                                    }.into()]),
-                                    ..Default::default()
-                                }
-                            }
-                        )]
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    ),
-                    ..Default::default()
-                };
-                let db = dyn_db();
-
-                async move {
-                    futures::try_join!(
-                        dm_blocks(gotchi.steader.clone(), dm),
-                        banker::pay(gotchi.steader.clone(), gotchi.inner.base_happiness, payment_note),
-                        db.update_item(db_update).map_err(|e| format!("Couldn't update owner log: {}", e))
-                    )?;
-                    Ok(())
-                }
-            })
-            .await
-            .map_err(|e: String| format!("harvest msg send err: {}", e))?;
-
-            funds_awarded += total_happiness;
-        }
-
-        futures::try_join!(
-            banker::message(format!("{} GP earned this harvest!", funds_awarded)),
-            banker::message(format!("total happiness: {}", total_happiness)),
-        )?;
-    } else if CONFIG.special_users.contains(&r.user_id) {
-        if let Some((receiver, amount, archetype_handle)) =
-            SPAWN_POSSESSION.captures(&r.text).and_then(|c| {
-                info!("spawn possession captures: {:?}", c);
-                let _spawner = c.get(1).filter(|x| x.as_str() == &*ID)?;
-                let receiver = c.get(3).map(|x| x.as_str()).unwrap_or(&r.user_id);
-                let amount = c.get(5).and_then(|x| x.as_str().parse().ok()).unwrap_or(1);
-                let possession_name = c.get(6)?.as_str();
-                let archetype_handle = CONFIG
-                    .possession_archetypes
-                    .iter()
-                    .position(|x| x.name == possession_name)?;
-                Some((receiver.to_string(), amount, archetype_handle))
-            })
-        {
-            let arch = config::CONFIG
-                .possession_archetypes
-                .get(archetype_handle)
-                .expect("invalid archetype handle");
-
-            market::log_blocks(vec![
-                json!({
-                    "type": "section",
-                    "text": mrkdwn(format!(
-                        concat!(
-                            "*{}* new {} *{}* {} been spawned! ",
-                            "Special user <@{}> spawned it for <@{}>.",
-                        ),
-                        amount,
-                        emojify(&arch.name),
-                        arch.name,
-                        if amount == 1 {
-                            "has"
-                        } else {
-                            "have"
-                        },
-                        &r.user_id,
-                        &receiver,
-                    )),
-                    "accessory": {
-                        "type": "image",
-                        "image_url": format!(
-                            "http://{}/gotchi/img/{}/{}.png",
-                            *URL,
-                            format!("{:?}", arch.kind.category()).to_lowercase(),
-                            filify(&arch.name)
-                        ),
-                        "alt_text": "Hackpheus holding a Gift!",
-                    }
-                }),
-                comment("U GET AN EGG, U GET AN EGG, U GET AN EGG!")
-            ])
-            .await?;
-
-            // todo: async concurrency
-            for _ in 0..amount {
-                Hacksteader::give_possession(
-                    &dyn_db(),
-                    receiver.clone(),
-                    &Possession::new(
-                        archetype_handle,
-                        hacksteader::Owner {
-                            id: receiver.clone(),
-                            acquisition: hacksteader::Acquisition::spawned(),
-                        },
-                    ),
-                )
-                .await
-                .map_err(|e| {
-                    let a = format!("couldn't spawn possession: {}", e);
-                    error!("{}", e);
-                    a
-                })?;
-            }
-        }
-        if let Some((dump_to, dump_amount)) = DUMP_GP.captures(&r.text).and_then(|c| {
-            let _dumper = c.get(1).filter(|x| x.as_str() == &*ID)?;
-            Some((
-                c.get(2)?.as_str().to_string(),
-                c.get(3)?.as_str().parse::<u64>().ok()?,
-            ))
-        }) {
-            info!("dumping {} to {}", dump_amount, dump_to);
-            banker::pay(dump_to, dump_amount, "GP dump".to_string()).await?;
-        }
-        if GOBLIN_STAMP
-            .captures(&r.text)
-            .and_then(|c| c.get(1))
-            .filter(|x| x.as_str() == &*ID)
-            .is_some()
-        {
-            info!("goblin_stomp time!");
-
-            match hacksteader::goblin_stomp(&dyn_db(), &*to_farming).await {
-                Ok(()) => {}
-                Err(e) => error!("goblin stomp error: {}", e),
-            }
-        }
-        if GOBLIN_SLAUGHTER
-            .captures(&r.text)
-            .and_then(|c| c.get(1))
-            .filter(|x| x.as_str() == &*ID)
-            .is_some()
-        {
-            info!("goblin slaughter time!");
-
-            match hacksteader::goblin_slaughter(&dyn_db()).await {
-                Ok(()) => {}
-                Err(e) => error!("goblin slaughter error: {}", e),
-            }
-        }
-        if let Some(archetype_handle) = GOBLIN_NAB.captures(&r.text).and_then(|c| {
-            if c.get(1)?.as_str() == &*ID {
-                config::CONFIG
-                    .find_possession_handle(&c.get(2)?.as_str())
-                    .ok()
-            } else {
-                None
-            }
-        }) {
-            use futures::stream::{self, StreamExt, TryStreamExt};
-            info!("goblin nab time!");
-
-            let db = &dyn_db();
-
-            let scan = db.scan(rusoto_dynamodb::ScanInput {
-                table_name: hacksteader::TABLE_NAME.to_string(),
-                filter_expression: Some("cat = :item_cat AND archetype_handle = :ah".to_string()),
-                expression_attribute_values: Some(
-                    [
-                        (":item_cat".to_string(), Category::Misc.into_av()),
-                        (
-                            ":ah".to_string(),
-                            rusoto_dynamodb::AttributeValue {
-                                n: Some(archetype_handle.to_string()),
-                                ..Default::default()
-                            },
-                        ),
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect(),
-                ),
-                ..Default::default()
-            });
-
-            match scan.await {
-                Ok(rusoto_dynamodb::ScanOutput {
-                    items: Some(items), ..
-                }) => {
-                    stream::iter(
-                        items
-                            .into_iter()
-                            .map(|mut i| rusoto_dynamodb::WriteRequest {
-                                delete_request: Some(rusoto_dynamodb::DeleteRequest {
-                                    key: [
-                                        ("cat".to_string(), i.remove("cat").unwrap()),
-                                        ("id".to_string(), i.remove("id").unwrap()),
-                                    ]
-                                    .iter()
-                                    .cloned()
-                                    .collect(),
-                                }),
-                                ..Default::default()
-                            })
-                            .collect::<Vec<_>>()
-                            .chunks(25)
-                            .map(|items| {
-                                db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                                    request_items: [(
-                                        hacksteader::TABLE_NAME.to_string(),
-                                        items.to_vec(),
-                                    )]
-                                    .iter()
-                                    .cloned()
-                                    .collect(),
-                                    ..Default::default()
-                                })
-                            }),
-                    )
-                    .map(|x| Ok(x))
-                    .try_for_each_concurrent(None, |r| async move {
-                        match r.await {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(format!("error deleting for goblin nab: {}", e)),
-                        }
-                    })
-                    .await
-                    .map_err(|e| {
-                        let a = format!("goblin nab async err: {}", e);
-                        error!("{}", a);
-                        a
-                    })?;
-                }
-                Err(e) => error!("goblin nab error: {}", e),
-                _ => error!("scan returned no items for nab request!"),
-            }
-        }
-    }
-
-    Ok(())
-}
-
 #[rocket::get("/steadercount")]
 async fn steadercount() -> Result<String, String> {
-    hacksteader::Profile::fetch_all(&dyn_db())
+    core::Profile::fetch_all(&dyn_db())
         .await
         .map(|profiles| profiles.len().to_string())
 }
@@ -2931,8 +2454,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         let mut land_cert_queue: HashMap<String, uuid::Uuid> = HashMap::new();
 
         async move {
+            use core::Profile;
             use futures::stream::{self, StreamExt, TryStreamExt};
-            use hacksteader::{Plant, Profile, Tile};
+            use hacksteader::{Plant, Tile};
             use std::collections::HashMap;
 
             loop {
@@ -2951,7 +2475,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                             let config::ApplicationEffect::TimeIncrease {
                                 extra_cycles,
                                 duration_cycles,
-                            } = config::CONFIG
+                            } = CONFIG
                                 .possession_archetypes
                                 .get(item_ah)
                                 .expect("invalid archetype handle")
@@ -3052,7 +2576,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 plant.craft = Some(hacksteader::Craft {
                                     until_finish: recipe.time,
                                     total_cycles: recipe.time,
-                                    makes: recipe.makes,
+                                    makes: recipe.makes.any(),
                                     destroys_plant: recipe.destroys_plant,
                                 });
                             } else {
@@ -3168,10 +2692,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                     };
                     let neighbor_bonuses = neighbor_bonuses
-                        .iter()
-                        .filter(|(from, ah, _)| *from != tile.id && *ah == plant.archetype_handle)
-                        .map(|(_, _, (bonus, _))| bonus)
-                        .collect::<Vec<_>>();
+                        .clone()
+                        .bonuses_for_plant(tile.id, plant.archetype_handle);
 
                     // elapsed for this plant is the base amount of time plus some extras
                     // in case something is speeding up time for this plant
@@ -3239,7 +2761,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     for _ in 0..boosted_elapsed {
                         let plant_sum = plant
                             .advancements
-                            .sum(plant.xp, neighbor_bonuses.iter().copied());
+                            .sum(plant.xp, neighbor_bonuses.iter());
 
                         plant.craft = match plant.craft.take() {
                             Some(mut craft) => {
@@ -3249,7 +2771,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 } else {
                                     let p = Possession::new(
                                         craft.makes,
-                                        hacksteader::Owner::crafter(tile.steader.clone()),
+                                        possess::Owner::crafter(tile.steader.clone()),
                                     );
                                     if craft.destroys_plant {
                                         clear_plants.push(tile.id.clone());
@@ -3304,7 +2826,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                             (0..spawn_rate.gen_count(&mut rng)).map(move |_| {
                                                 let mut p = Possession::new(
                                                     *ah,
-                                                    hacksteader::Owner::farmer(owner.clone()),
+                                                    possess::Owner::farmer(owner.clone()),
                                                 );
                                                 if let Some(s) = p.kind.seed_mut() {
                                                     s.pedigree = pedigree.clone();
@@ -3317,7 +2839,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                                         sg.generations += 1;
                                                     } else {
                                                         s.pedigree.push(
-                                                            hacksteader::SeedGrower::new(
+                                                            possess::seed::SeedGrower::new(
                                                                 owner.clone(),
                                                                 1,
                                                             ),
@@ -3472,13 +2994,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .chunks(25)
                         .map(|items| {
                             db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                                request_items: [(
-                                    hacksteader::TABLE_NAME.to_string(),
-                                    items.to_vec(),
-                                )]
-                                .iter()
-                                .cloned()
-                                .collect(),
+                                request_items: [(core::TABLE_NAME.to_string(), items.to_vec())]
+                                    .iter()
+                                    .cloned()
+                                    .collect(),
                                 ..Default::default()
                             })
                         }),
@@ -3516,8 +3035,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 hackstead,
                 hackmarket,
                 action_endpoint,
-                challenge,
-                event,
+                event::challenge,
+                event::non_challenge_event,
                 stateofsteading,
                 steadercount
             ],

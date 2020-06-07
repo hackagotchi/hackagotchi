@@ -6,12 +6,16 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "core"
+path = "src/core/lib.rs"
+
 [dependencies]
 rocket = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
 rocket_contrib = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
 reqwest = { version = "0.10.4", features = ["json"] }
 crossbeam-channel = "0.4.2"
-serde = "1.0.105"
+serde = { version = "1.0.105", features = ["derive"] }
 serde_json = "1.0.49"
 rand = "0.7.3"
 rusoto_core = "0.43.0"

@@ -93,6 +93,7 @@ pub struct ProfileArchetype {
 }
 
 pub type HacksteadAdvancement = Advancement<HacksteadAdvancementSum>;
+pub type HacksteadAdvancementSet = AdvancementSet<HacksteadAdvancementSum>;
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub enum HacksteadAdvancementKind {
     Land { pieces: u32 },
@@ -125,6 +126,8 @@ impl AdvancementSum for HacksteadAdvancementSum {
 #[derive(Deserialize, Debug, Clone)]
 pub struct GotchiArchetype {
     pub base_happiness: u64,
+    #[serde(default)]
+    pub plant_effects: Option<(String, PlantAdvancement)>,
 }
 #[derive(Deserialize, Debug, Clone)]
 pub struct SeedArchetype {
@@ -145,6 +148,7 @@ pub struct LandUnlock {
 pub struct KeepsakeArchetype {
     pub item_application_effect: Option<ApplicationEffect>,
     pub unlocks_land: Option<LandUnlock>,
+    pub plant_effects: Option<(String, PlantAdvancement)>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -154,8 +158,8 @@ pub enum ArchetypeKind {
     Keepsake(KeepsakeArchetype),
 }
 impl ArchetypeKind {
-    pub fn category(&self) -> crate::hacksteader::Category {
-        use crate::hacksteader::Category;
+    pub fn category(&self) -> crate::Category {
+        use crate::Category;
         match self {
             ArchetypeKind::Gotchi(_) => Category::Gotchi,
             _ => Category::Misc,
@@ -193,34 +197,164 @@ impl Hash for PlantArchetype {
     }
 }
 pub type PlantAdvancement = Advancement<PlantAdvancementSum>;
+pub type PlantAdvancementSet = AdvancementSet<PlantAdvancementSum>;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum RecipeMakes<Handle: Clone> {
+    Just(usize, Handle),
+    OneOf(Vec<(f32, Handle)>),
+    AllOf(Vec<(usize, Handle)>),
+}
+impl<Handle: Clone> RecipeMakes<Handle> {
+    /// Returns one possible output, randomly (but properly weighted)
+    /// if more than one is possible.
+    pub fn any(&self) -> Handle {
+        use rand::Rng;
+        use RecipeMakes::*;
+
+        match self {
+            Just(_, h) => h.clone(),
+            OneOf(these) => {
+                let mut x: f32 = rand::thread_rng().gen_range(0.0, 1.0);
+                these
+                    .iter()
+                    .find_map(|(chance, h)| {
+                        x -= chance;
+                        if x < 0.0 {
+                            Some(h)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap()
+                    .clone()
+            }
+            AllOf(these) => {
+                let total = these.iter().map(|(count, _)| *count).sum::<usize>() as f32;
+                OneOf(
+                    these
+                        .iter()
+                        .map(|(count, h)| (*count as f32 / total, h.clone()))
+                        .collect(),
+                )
+                .any()
+            }
+        }
+    }
+}
+impl fmt::Display for RecipeMakes<&'static Archetype> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::frontend::emojify;
+        use RecipeMakes::*;
+
+        match self {
+            Just(1, x) => write!(f, "a {} _{}_", emojify(&x.name), x.name),
+            Just(n, x) => write!(f, "*{}* {} _{}_", n, emojify(&x.name), x.name),
+            OneOf(these) => write!(
+                f,
+                "one of these:\n{}",
+                these
+                    .iter()
+                    .map(|(chance, what)| {
+                        format!(
+                            "a {} _{}_ (*{:.2}%* chance)",
+                            emojify(&what.name),
+                            what.name,
+                            chance
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            AllOf(these) => write!(
+                f,
+                "all of the following:\n{}",
+                these
+                    .iter()
+                    .map(|(count, what)| {
+                        format!("*{}* {} _{}_", emojify(&what.name), what.name, count)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        }
+    }
+}
+
+impl RecipeMakes<ArchetypeHandle> {
+    pub fn lookup_handles(self) -> Option<RecipeMakes<&'static Archetype>> {
+        use RecipeMakes::*;
+
+        fn lookup(ah: ArchetypeHandle) -> Option<&'static Archetype> {
+            CONFIG.possession_archetypes.get(ah)
+        }
+
+        Some(match self {
+            Just(n, ah) => Just(n, lookup(ah)?),
+            OneOf(l) => OneOf(
+                l.into_iter()
+                    .map(|(c, ah)| Some((c, lookup(ah)?)))
+                    .collect::<Option<_>>()?,
+            ),
+            AllOf(l) => AllOf(
+                l.into_iter()
+                    .map(|(c, ah)| Some((c, lookup(ah)?)))
+                    .collect::<Option<_>>()?,
+            ),
+        })
+    }
+}
+
+impl RecipeMakes<String> {
+    pub fn find_handles(self) -> Result<RecipeMakes<ArchetypeHandle>, ConfigError> {
+        use RecipeMakes::*;
+
+        fn find(name: String) -> Result<ArchetypeHandle, ConfigError> {
+            CONFIG.find_possession_handle(&name)
+        }
+
+        Ok(match self {
+            Just(n, ah) => Just(n, find(ah)?),
+            OneOf(l) => OneOf(
+                l.into_iter()
+                    .map(|(c, ah)| Ok((c, find(ah)?)))
+                    .collect::<Result<_, _>>()?,
+            ),
+            AllOf(l) => AllOf(
+                l.into_iter()
+                    .map(|(c, ah)| Ok((c, find(ah)?)))
+                    .collect::<Result<_, _>>()?,
+            ),
+        })
+    }
+}
+
 /// Recipe is generic over the way Archetypes are referred to
 /// to make it easy to use Strings in the configs and ArchetypeHandles
 /// at runtime
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct Recipe<Handle> {
+pub struct Recipe<Handle: Clone> {
     pub needs: Vec<(usize, Handle)>,
-    pub makes: Handle,
+    pub makes: RecipeMakes<Handle>,
+    #[serde(default)]
     pub destroys_plant: bool,
     pub time: f32,
 }
 impl Recipe<ArchetypeHandle> {
-    pub fn satisfies(&self, inv: &[super::hacksteader::Possession]) -> bool {
+    pub fn satisfies(&self, inv: &[crate::Possession]) -> bool {
         self.needs.iter().copied().all(|(count, ah)| {
             let has = inv.iter().filter(|x| x.archetype_handle == ah).count();
             count <= has
         })
     }
     pub fn lookup_handles(self) -> Option<Recipe<&'static Archetype>> {
-        let makes = CONFIG.possession_archetypes.get(self.makes)?;
-        let needs = self
-            .needs
-            .into_iter()
-            .map(|(n, x)| Some((n, CONFIG.possession_archetypes.get(x)?)))
-            .collect::<Option<Vec<(_, &Archetype)>>>()?;
-
         Some(Recipe {
-            makes,
-            needs,
+            makes: self.makes.lookup_handles()?,
+            needs: self
+                .needs
+                .into_iter()
+                .map(|(n, x)| Some((n, CONFIG.possession_archetypes.get(x)?)))
+                .collect::<Option<Vec<(_, &Archetype)>>>()?,
             time: self.time,
             destroys_plant: self.destroys_plant,
         })
@@ -306,7 +440,7 @@ impl AdvancementSum for PlantAdvancementSum {
                         .iter()
                         .map(|r| {
                             Ok(Recipe {
-                                makes: CONFIG.find_possession_handle(&r.makes)?,
+                                makes: r.makes.clone().find_handles()?,
                                 needs: r
                                     .needs
                                     .iter()
@@ -376,7 +510,7 @@ pub struct Advancement<S: AdvancementSum> {
 #[serde(bound(deserialize = ""))]
 pub struct AdvancementSet<S: AdvancementSum> {
     pub base: Advancement<S>,
-    rest: Vec<Advancement<S>>,
+    pub rest: Vec<Advancement<S>>,
 }
 #[allow(dead_code)]
 impl<S: AdvancementSum> AdvancementSet<S> {
