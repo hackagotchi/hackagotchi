@@ -28,7 +28,15 @@ mod yank_config;
 use hacksteader::Hacksteader;
 
 pub fn dyn_db() -> DynamoDbClient {
-    DynamoDbClient::new(rusoto_core::Region::UsEast1)
+    DynamoDbClient::new_with(
+        {
+            let mut c = rusoto_core::HttpClient::new().unwrap();
+            c.local_agent("http://localhost:8000".to_string());
+            c
+        },
+        rusoto_credential::EnvironmentProvider::default(),
+        rusoto_core::Region::UsEast1
+    )
 }
 
 const FARM_CYCLE_SECS: u64 = 5;
@@ -41,6 +49,7 @@ lazy_static::lazy_static! {
     pub static ref APP_ID: String = std::env::var("APP_ID").unwrap();
     pub static ref URL: String = std::env::var("URL").unwrap();
     pub static ref HACKSTEAD_PRICE: u64 = std::env::var("HACKSTEAD_PRICE").unwrap().parse().unwrap();
+    pub static ref LOCAL_DB: bool = std::env::var("LOCAL_DB").is_ok();
 }
 
 pub fn mrkdwn<S: std::string::ToString>(txt: S) -> Value {
