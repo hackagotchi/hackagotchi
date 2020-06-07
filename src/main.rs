@@ -1976,7 +1976,7 @@ async fn action_endpoint(
                     "text": mrkdwn(format!(
                         concat!(
                             "Are you sure you want your plant to ",
-                            "spend the next {:.2} minutes crafting {}",
+                            "spend the next {:.2} minutes crafting {} ",
                             "using\n{}\n{}",
                         ),
                         (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
