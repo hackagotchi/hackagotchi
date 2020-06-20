@@ -70,7 +70,7 @@ fn spawn_command<'a>(
                             "it"
                         } else {
                             "them"
-                        }
+                        },
                         &receiver,
                     )),
                     "accessory": {
