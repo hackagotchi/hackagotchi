@@ -35,7 +35,7 @@ pub fn dyn_db() -> DynamoDbClient {
             c
         },
         rusoto_credential::EnvironmentProvider::default(),
-        rusoto_core::Region::UsEast1
+        rusoto_core::Region::UsEast1,
     )
 }
 
@@ -76,11 +76,16 @@ pub fn filify<S: ToString>(txt: S) -> String {
     txt.to_string().to_lowercase().replace(" ", "_")
 }
 
-pub async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
+pub async fn dm_blocks(
+    user_id: String,
+    notif_msg: String,
+    blocks: Vec<Value>,
+) -> Result<(), String> {
     let o = json!({
         "channel": user_id,
         "token": *TOKEN,
-        "blocks": blocks
+        "blocks": blocks,
+        "text": notif_msg
     });
 
     debug!("{}", serde_json::to_string_pretty(&o).unwrap());
@@ -554,10 +559,7 @@ fn hackstead_blocks(
         if let Some(p) = tile.plant.as_ref() {
             let neighbor_bonuses = neighbor_bonuses
                 .clone()
-                .bonuses_for_plant(
-                    tile.id,
-                    p.archetype_handle
-                );
+                .bonuses_for_plant(tile.id, p.archetype_handle);
             let sum = p.advancements.sum(p.xp, neighbor_bonuses.iter());
             let unboosted_sum = p.advancements.raw_sum(p.xp);
             let ca = p.current_advancement();
@@ -1571,9 +1573,12 @@ async fn action_endpoint(
                 update_user_home_tab(user.id.clone()).await?;
 
                 let possession = hacksteader::get_possession(&dyn_db(), key).await?;
+                let notif_msg =
+                    format!("<@{}> has gifted you a {}!", user.id, possession.nickname())
+                        .to_string();
 
                 // DM the new_owner about their new acquisition!
-                dm_blocks(new_owner.clone(), {
+                dm_blocks(new_owner.clone(), notif_msg, {
                     // TODO: with_capacity optimization
                     let mut blocks = vec![
                         json!({
@@ -1893,8 +1898,12 @@ async fn action_endpoint(
             .await?
         }
         "gotchi_overview" => {
-            let (steader, interactivity, credentials, push):
-                (String, Interactivity, Credentials, bool) = serde_json::from_str(&action.value).unwrap();
+            let (steader, interactivity, credentials, push): (
+                String,
+                Interactivity,
+                Credentials,
+                bool,
+            ) = serde_json::from_str(&action.value).unwrap();
 
             let hs = Hacksteader::from_db(&dyn_db(), steader).await?;
 
@@ -1952,11 +1961,7 @@ async fn action_endpoint(
                     e
                 })?;
 
-            let neighbor_bonuses = all_nb
-                .bonuses_for_plant(
-                    plant_id,
-                    plant.archetype_handle
-                );
+            let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
             let sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter());
 
@@ -2146,11 +2151,7 @@ async fn action_endpoint(
                 .find_map(|tile| tile.plant.as_ref().filter(|_p| tile.id == plant_id))
                 .ok_or_else(|| format!("no such plant!"))?;
             let all_nb = hs.neighbor_bonuses();
-            let neighbor_bonuses = all_nb
-                .bonuses_for_plant(
-                    plant_id,
-                    plant.archetype_handle
-                );
+            let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
             let advancements = plant
                 .advancements
@@ -2161,9 +2162,7 @@ async fn action_endpoint(
                 })
                 .chain(neighbor_bonuses.iter())
                 .collect::<Vec<_>>();
-            let sum = plant
-                .advancements
-                .sum(plant.xp, neighbor_bonuses.iter());
+            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter());
             let yield_farm_cycles = plant.base_yield_duration / sum.yield_speed_multiplier;
 
             let mut blocks = vec![];
@@ -2768,9 +2767,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         boosted_elapsed, profile.id
                     );
                     for _ in 0..boosted_elapsed {
-                        let plant_sum = plant
-                            .advancements
-                            .sum(plant.xp, neighbor_bonuses.iter());
+                        let plant_sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter());
 
                         plant.craft = match plant.craft.take() {
                             Some(mut craft) => {
@@ -3025,11 +3022,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     stream::iter(profiles.clone())
                         .map(|x| Ok(x))
                         .try_for_each_concurrent(None, |(who, _)| { update_user_home_tab(who) }),
-                    stream::iter(dms)
-                        .map(|x| Ok(x))
-                        .try_for_each_concurrent(None, |(who, blocks)| {
-                            dm_blocks(who.clone(), blocks.to_vec())
-                        }),
+                    stream::iter(dms).map(|x| Ok(x)).try_for_each_concurrent(
+                        None,
+                        |(who, blocks)| {
+                            dm_blocks(who.clone(), "Level Up!".to_string(), blocks.to_vec())
+                        }
+                    ),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
             }

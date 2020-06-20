@@ -36,38 +36,52 @@ fn spawn_command<'a>(
             .get(archetype_handle)
             .expect("invalid archetype handle");
 
-        market::log_blocks(vec![
-            json!({
-                "type": "section",
-                "text": mrkdwn(format!(
-                    concat!(
-                        "*{}* new {} *{}* {} been spawned! ",
-                        "Special user <@{}> spawned it for <@{}>.",
-                    ),
-                    amount,
-                    emojify(&arch.name),
-                    arch.name,
-                    if amount == 1 {
-                        "has"
-                    } else {
-                        "have"
-                    },
-                    &r.user_id,
-                    &receiver,
-                )),
-                "accessory": {
-                    "type": "image",
-                    "image_url": format!(
-                        "http://{}/gotchi/img/{}/{}.png",
-                        *URL,
-                        format!("{:?}", arch.kind.category()).to_lowercase(),
-                        filify(&arch.name)
-                    ),
-                    "alt_text": "Hackpheus holding a Gift!",
-                }
-            }),
-            comment("U GET AN EGG, U GET AN EGG, U GET AN EGG!"),
-        ])
+        market::log_blocks(
+            format!(
+                "{} spawned {} {} for {}!",
+                &r.user_id,
+                if amount == 1 {
+                    "a".to_string()
+                } else {
+                    amount.to_string()
+                },
+                arch.name,
+                &receiver
+            )
+            .to_string(),
+            vec![
+                json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        concat!(
+                            "*{}* new {} *{}* {} been spawned! ",
+                            "Special user <@{}> spawned it for <@{}>.",
+                        ),
+                        amount,
+                        emojify(&arch.name),
+                        arch.name,
+                        if amount == 1 {
+                            "has"
+                        } else {
+                            "have"
+                        },
+                        &r.user_id,
+                        &receiver,
+                    )),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!(
+                            "http://{}/gotchi/img/{}/{}.png",
+                            *URL,
+                            format!("{:?}", arch.kind.category()).to_lowercase(),
+                            filify(&arch.name)
+                        ),
+                        "alt_text": "Hackpheus holding a Gift!",
+                    }
+                }),
+                comment("U GET AN EGG, U GET AN EGG, U GET AN EGG!"),
+            ],
+        )
         .await?;
 
         // todo: async concurrency
@@ -153,8 +167,10 @@ fn yank_config<'a>(
     async move {
         banker::message(match crate::yank_config::yank_config().await {
             Ok(()) => format!(
-                "{} goblin chanting hath brought forth new config from the heavens!", 
-                CHANTING_DESCRIPTIONS.choose(&mut rand::thread_rng()).unwrap()
+                "{} goblin chanting hath brought forth new config from the heavens!",
+                CHANTING_DESCRIPTIONS
+                    .choose(&mut rand::thread_rng())
+                    .unwrap()
             ),
             Err(e) => format!("goblin chanting interrupted by vile belch:\n{}", e),
         })
