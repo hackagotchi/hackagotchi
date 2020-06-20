@@ -55,7 +55,7 @@ fn spawn_command<'a>(
                     "text": mrkdwn(format!(
                         concat!(
                             "*{}* new {} *{}* {} been spawned! ",
-                            "Special user <@{}> spawned it for <@{}>.",
+                            "Special user <@{}> spawned {} for <@{}>.",
                         ),
                         amount,
                         emojify(&arch.name),
@@ -66,6 +66,11 @@ fn spawn_command<'a>(
                             "have"
                         },
                         &r.user_id,
+                        if amount == 1 {
+                            "it"
+                        } else {
+                            "them"
+                        }
                         &receiver,
                     )),
                     "accessory": {

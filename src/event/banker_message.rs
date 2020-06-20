@@ -115,7 +115,7 @@ fn banker_balance<'a>(
 
                 async move {
                     futures::try_join!(
-                        dm_blocks(gotchi.steader.clone(), dm),
+                        dm_blocks(gotchi.steader.clone(), "".to_string(), dm),
                         banker::pay(gotchi.steader.clone(), gotchi.inner.base_happiness, payment_note),
                         db.update_item(db_update).map_err(|e| format!("Couldn't update owner log: {}", e))
                     )?;
