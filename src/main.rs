@@ -787,8 +787,7 @@ fn hackstead_blocks(
 
     blocks.push(json!({ "type": "divider" }));
 
-    /*
-    if !bottom_gotchi || !bottom_inventory {
+    if !bottom_gotchi {
         let mut actions = vec![];
 
         if !bottom_gotchi {
@@ -801,6 +800,7 @@ fn hackstead_blocks(
             }));
         }
 
+        /*
         if !bottom_inventory {
             actions.push(json!({
                 "type": "button",
@@ -809,7 +809,7 @@ fn hackstead_blocks(
                 "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
                 "action_id": "inventory_overview",
             }));
-        }
+        }*/
 
         blocks.push(json!({
             "type": "actions",
@@ -817,7 +817,7 @@ fn hackstead_blocks(
         }));
 
         blocks.push(json!({ "type": "divider" }));
-    }*/
+    }
 
     let tiles_owned = land.len();
     for tile in land.into_iter() {

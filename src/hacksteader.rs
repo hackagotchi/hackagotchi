@@ -391,12 +391,16 @@ impl Craft {
                 .map_err(|e| FloatFieldParse("until_finish", e))?,
             recipe_archetype_handle: m
                 .get("recipe_archetype_handle")
-                .ok_or(MissingField("recipe_archetype_handle"))?
-                .n
-                .as_ref()
-                .ok_or(WronglyTypedField("recipe_archetype_handle"))?
-                .parse()
-                .map_err(|e| IntFieldParse("recipe_archetype_handle", e))?,
+                .ok_or(MissingField("until_finish"))
+                .and_then(|o| {
+                    Ok(o
+                        .n
+                        .as_ref()
+                        .ok_or(WronglyTypedField("recipe_archetype_handle"))?
+                        .parse()
+                        .map_err(|e| IntFieldParse("recipe_archetype_handle", e))?)
+                })
+                .unwrap_or(0)
         })
     }
 
