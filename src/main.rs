@@ -740,7 +740,7 @@ fn hackstead_blocks(
 
     let inv_occurrences = inventory_occurences(inventory.clone());
 
-    let bottom_gotchi = gotchis.len() < 5;
+    //let bottom_gotchi = gotchis.len() < 5;
     //let bottom_inventory = inv_occurrences.len() < 5;
     let hs_adv = profile.current_advancement();
     let next_hs_adv = profile.next_advancement();
@@ -787,9 +787,10 @@ fn hackstead_blocks(
 
     blocks.push(json!({ "type": "divider" }));
 
-    if !bottom_gotchi {
+    /*if !bottom_inventory {
         let mut actions = vec![];
 
+        /*
         if !bottom_gotchi {
             actions.push(json!({
                 "type": "button",
@@ -798,9 +799,8 @@ fn hackstead_blocks(
                 "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
                 "action_id": "gotchi_overview",
             }));
-        }
+        }*/
 
-        /*
         if !bottom_inventory {
             actions.push(json!({
                 "type": "button",
@@ -809,7 +809,7 @@ fn hackstead_blocks(
                 "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
                 "action_id": "inventory_overview",
             }));
-        }*/
+        }
 
         blocks.push(json!({
             "type": "actions",
@@ -817,7 +817,7 @@ fn hackstead_blocks(
         }));
 
         blocks.push(json!({ "type": "divider" }));
-    }
+    }*/
 
     let tiles_owned = land.len();
     for tile in land.into_iter() {
@@ -1049,23 +1049,24 @@ fn hackstead_blocks(
         }));
     }
 
-    /*if bottom_inventory {*/
-    blocks.push(json!({ "type": "divider" }));
+    //if bottom_inventory {
+        blocks.push(json!({ "type": "divider" }));
 
-    if inv_occurrences.is_empty() {
-        blocks.push(comment("Your inventory is empty"));
-    } else {
-        blocks.append(&mut inventory_section(
-            inv_occurrences,
-            interactivity,
-            credentials,
-            false,
-            user_id.clone(),
-        ));
-    }
-    /*}*/
+        if inv_occurrences.is_empty() {
+            blocks.push(comment("Your inventory is empty"));
+        } else {
+            blocks.append(&mut inventory_section(
+                inv_occurrences,
+                interactivity,
+                credentials,
+                false,
+                user_id.clone(),
+            ));
+        }
+    //}
 
-    if bottom_gotchi && gotchis.len() > 0 {
+    //if bottom_gotchi && gotchis.len() > 0 {
+    if gotchis.len() > 0 {
         blocks.push(json!({ "type": "divider" }));
 
         blocks.append(&mut gotchi_section(
@@ -2234,32 +2235,39 @@ async fn action_endpoint(
                             .plant_archetypes
                             .iter()
                             .filter_map(|pa| { // plant archetype
-                                let options = seeds
+                                let mut seed_iter = seeds
                                     .iter()
-                                    .filter(|s| s.inner.grows_into == pa.name)
-                                    .map(|s| {
-                                        json!({
+                                    .filter(|s| s.inner.grows_into == pa.name);
+                                let first_seed = seed_iter.next();
+                                // technically a lie if first_seed is None
+                                let seed_count = seed_iter.count() + 1;
+
+                                if let Some(s) = first_seed {
+                                    let mut desc = format!(
+                                        "{} - {}",
+                                        seed_count,
+                                        s.description
+                                    );
+                                    desc.truncate(75);
+                                    if dbg!(desc.len()) == 75 {
+                                        desc.truncate(71);
+                                        desc.push_str("...")
+                                    }
+
+                                    Some(json!({
+                                        "label": plain_text(&pa.name),
+                                        "options": [{
                                             "text": plain_text(format!("{} {}", emojify(&s.name), s.name)),
-                                            "description": plain_text(format!(
-                                                "{} generations old", 
-                                                s.inner.pedigree.iter().map(|sg| sg.generations).sum::<u64>()
-                                            )),
+                                            "description": plain_text(desc),
                                             // this is fucky-wucky because value can only be 75 chars
                                             "value": serde_json::to_string(&(
                                                 &tile_id.to_simple().to_string(),
                                                 s.id.to_simple().to_string(),
                                             )).unwrap(),
-                                        })
-                                    })
-                                    .collect::<Vec<Value>>();
-
-                                if options.is_empty() {
-                                    None
-                                } else {
-                                    Some(json!({
-                                        "label": plain_text(&pa.name),
-                                        "options": options,
+                                        }]
                                     }))
+                                } else {
+                                    None
                                 }
                             })
                             .collect::<Vec<Value>>(),
