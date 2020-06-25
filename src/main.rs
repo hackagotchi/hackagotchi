@@ -2458,7 +2458,7 @@ async fn action_endpoint(
 
                     let mut head = json!({
                         "type": "section",
-                        "text": mrkdwn(if craft_output_count == 1 {
+                        "text": mrkdwn(if craft_output_count <= 1 {
                                 let (hi, lo) = recipe.xp;
                                 format!(
                                     "*{}* + around {}xp\n_{}_",
