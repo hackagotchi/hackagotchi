@@ -1,7 +1,8 @@
 use config::{ArchetypeHandle, PlantArchetype, CONFIG};
-use core::config;
-use core::possess;
-use core::{AttributeParseError, Category, Item, Key, Profile, TABLE_NAME};
+use hcor::config;
+use log::*;
+use hcor::possess;
+use hcor::{AttributeParseError, Category, Item, Key, Profile, TABLE_NAME};
 use possess::{Possessed, Possession};
 use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
@@ -15,7 +16,10 @@ pub async fn exists(db: &DynamoDbClient, user_id: String) -> bool {
     })
     .await
     .map(|x| x.item.is_some())
-    .unwrap_or(false)
+    .unwrap_or_else(|e| {
+        error!("couldn't see if hacksteader exists: {}", e);
+        false
+    })
 }
 
 pub async fn get_possession(db: &DynamoDbClient, key: Key) -> Result<Possession, String> {
@@ -246,18 +250,118 @@ impl Tile {
 #[derive(Debug, Clone)]
 pub struct Craft {
     pub until_finish: f32,
-    pub total_cycles: f32,
-    pub destroys_plant: bool,
-    pub makes: ArchetypeHandle,
+    pub recipe_archetype_handle: ArchetypeHandle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Plant {
     pub xp: u64,
     pub until_yield: f32,
     pub craft: Option<Craft>,
     pub pedigree: Vec<possess::seed::SeedGrower>,
+    /// Effects from potions, warp powder, etc. that actively change the behavior of this plant.
+    pub effects: Vec<Effect>,
     pub archetype_handle: ArchetypeHandle,
+    /// This field isn't saved to the database, and is just used
+    /// when `plant.increase_xp()` is called.
+    pub queued_xp_bonus: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Effect {
+    pub until_finish: Option<f32>,
+    /// The archetype of the item that was consumed to apply this effect.
+    pub item_archetype_handle: ArchetypeHandle,
+    /// The archetype of the effect within this item that describes this effect.
+    pub effect_archetype_handle: ArchetypeHandle,
+}
+
+impl std::ops::Deref for Effect {
+    type Target = config::Archetype;
+
+    fn deref(&self) -> &Self::Target {
+        &CONFIG
+            .possession_archetypes
+            .get(self.item_archetype_handle)
+            .expect("invalid archetype handle")
+    }
+}
+
+impl Effect {
+    pub fn from_av(av: &AttributeValue) -> Result<Self, AttributeParseError> {
+        use AttributeParseError::*;
+
+        let m = av.m.as_ref().ok_or(WrongType)?;
+
+        Ok(Self {
+            until_finish: match m.get("until_finish") {
+                Some(x) => Some(
+                    x
+                        .n
+                        .as_ref()
+                        .ok_or(WronglyTypedField("until_finish"))?
+                        .parse()
+                        .map_err(|e| FloatFieldParse("until_finish", e))?
+                ),
+                None => None
+            },
+            item_archetype_handle: m
+                .get("item_archetype_handle")
+                .ok_or(MissingField("item_archetype_handle"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("item_archetype_handle"))?
+                .parse()
+                .map_err(|e| IntFieldParse("item_archetype_handle", e))?,
+            effect_archetype_handle: m
+                .get("effect_archetype_handle")
+                .ok_or(MissingField("effect_archetype_handle"))?
+                .n
+                .as_ref()
+                .ok_or(WronglyTypedField("effect_archetype_handle"))?
+                .parse()
+                .map_err(|e| IntFieldParse("effect_archetype_handle", e))?,
+        })
+    }
+
+    pub fn into_av(self) -> AttributeValue {
+        AttributeValue {
+            m: Some({
+                let mut a = vec![
+                    (
+                        "item_archetype_handle".to_string(),
+                        AttributeValue {
+                            n: Some(self.item_archetype_handle.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "effect_archetype_handle".to_string(),
+                        AttributeValue {
+                            n: Some(self.effect_archetype_handle.to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                ];
+
+                if let Some(until_finish) = self.until_finish {
+                    a.push((
+                        "until_finish".to_string(),
+                        AttributeValue {
+                            n: Some(until_finish.to_string()),
+                            ..Default::default()
+                        },
+                    ));
+                }
+
+                a
+                .iter()
+                .cloned()
+                .collect()
+            }),
+            ..Default::default()
+        }
+    }
 }
 
 impl std::ops::Deref for Plant {
@@ -285,26 +389,14 @@ impl Craft {
                 .ok_or(WronglyTypedField("until_finish"))?
                 .parse()
                 .map_err(|e| FloatFieldParse("until_finish", e))?,
-            total_cycles: m
-                .get("total_cycles")
-                .ok_or(MissingField("total_cycles"))?
+            recipe_archetype_handle: m
+                .get("recipe_archetype_handle")
+                .ok_or(MissingField("recipe_archetype_handle"))?
                 .n
                 .as_ref()
-                .ok_or(WronglyTypedField("total_cycles"))?
+                .ok_or(WronglyTypedField("recipe_archetype_handle"))?
                 .parse()
-                .map_err(|e| FloatFieldParse("total_cycles", e))?,
-            makes: m
-                .get("makes")
-                .ok_or(MissingField("makes"))?
-                .n
-                .as_ref()
-                .ok_or(WronglyTypedField("makes"))?
-                .parse()
-                .map_err(|e| IntFieldParse("makes", e))?,
-            destroys_plant: match m.get("destroys_plant") {
-                None => false,
-                Some(x) => x.bool.ok_or(WronglyTypedField("destroys_plant"))?,
-            },
+                .map_err(|e| IntFieldParse("recipe_archetype_handle", e))?,
         })
     }
 
@@ -320,23 +412,9 @@ impl Craft {
                         },
                     ),
                     (
-                        "total_cycles".to_string(),
+                        "recipe_archetype_handle".to_string(),
                         AttributeValue {
-                            n: Some(self.total_cycles.to_string()),
-                            ..Default::default()
-                        },
-                    ),
-                    (
-                        "makes".to_string(),
-                        AttributeValue {
-                            n: Some(self.makes.to_string()),
-                            ..Default::default()
-                        },
-                    ),
-                    (
-                        "destroys_plant".to_string(),
-                        AttributeValue {
-                            bool: Some(self.destroys_plant),
+                            n: Some(self.recipe_archetype_handle.to_string()),
                             ..Default::default()
                         },
                     ),
@@ -353,14 +431,89 @@ impl Craft {
 impl Plant {
     pub fn from_seed(seed: Possessed<possess::Seed>) -> Self {
         let mut s = Self {
-            xp: 0,
-            until_yield: 0.0,
-            craft: None,
             archetype_handle: CONFIG.find_plant_handle(&seed.inner.grows_into).unwrap(),
             pedigree: seed.inner.pedigree,
+            ..Default::default()
         };
-        s.until_yield = s.base_yield_duration;
+        s.until_yield = s.base_yield_duration.unwrap_or(0.0);
         s
+    }
+
+    fn effect_advancements<'a>(&'a self) -> impl Iterator<Item = &'a config::PlantAdvancement> {
+        self
+            .effects
+            .iter()
+            .filter_map(|e| CONFIG.get_item_application_plant_advancement(
+                e.item_archetype_handle,
+                e.effect_archetype_handle
+            ))
+            .map(|(_effect, adv)| adv)
+    }
+    
+    /// Excludes neighbor bonuses
+    pub fn advancements_sum<'a>(
+        &'a self,
+        extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
+    ) -> config::PlantAdvancementSum {
+        self
+            .advancements
+            .sum(
+                self.xp,
+                self
+                    .effect_advancements()
+                    .chain(extra_advancements)
+            )
+    }
+    
+    /// A sum struct for all of the possible advancements for this plant,
+    /// plus any effects it has active.
+    pub fn advancements_max_sum<'a>(
+        &'a self,
+        extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
+    ) -> config::PlantAdvancementSum {
+        self
+            .advancements
+            .max(
+                self
+                    .effect_advancements()
+                    .chain(extra_advancements)
+            )
+    }
+
+    pub fn neighborless_advancements_sum<'a>(
+        &'a self,
+        extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
+    ) -> config::PlantAdvancementSum {
+        self
+            .advancements
+            .raw_sum(
+                self.xp,
+                self
+                    .effect_advancements()
+                    .chain(extra_advancements)
+            )
+    }
+
+    pub fn unlocked_advancements<'a>(
+        &'a self,
+        extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
+    ) -> impl Iterator<Item = &'a config::PlantAdvancement> {
+        self
+            .advancements
+            .unlocked(self.xp)
+            .chain(self.effect_advancements())
+            .chain(extra_advancements)
+    }
+    
+    pub fn all_advancements<'a>(
+        &'a self,
+        extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
+    ) -> impl Iterator<Item = &'a config::PlantAdvancement> {
+        self
+            .advancements
+            .all()
+            .chain(self.effect_advancements())
+            .chain(extra_advancements)
     }
 
     pub fn current_advancement(&self) -> &config::PlantAdvancement {
@@ -371,13 +524,39 @@ impl Plant {
         self.advancements.next(self.xp)
     }
 
-    pub fn increment_xp(&mut self) -> Option<&'static config::PlantAdvancement> {
+    pub fn increase_xp(&mut self, mut amt: u64) -> Option<&'static config::PlantAdvancement> {
+        amt += self.queued_xp_bonus;
+        self.queued_xp_bonus = 0;
         CONFIG
             .plant_archetypes
             .get(self.archetype_handle)
             .expect("invalid archetype handle")
             .advancements
-            .increment_xp(&mut self.xp)
+            .increase_xp(&mut self.xp, amt)
+    }
+
+    pub fn current_recipe_raw(&self) -> Option<config::Recipe<ArchetypeHandle>> {
+        self.craft.as_ref().and_then(|c| self.get_recipe_raw(c.recipe_archetype_handle))
+    }
+
+    pub fn current_recipe(&self) -> Option<config::Recipe<&'static config::Archetype>> {
+        self
+            .current_recipe_raw()
+            .and_then(|x| x.lookup_handles())
+    }
+
+    pub fn get_recipe_raw(&self, recipe_ah: ArchetypeHandle) -> Option<config::Recipe<ArchetypeHandle>> {
+        self
+            .advancements_sum(std::iter::empty())
+            .recipes
+            .get(recipe_ah)
+            .cloned()
+    }
+
+    pub fn get_recipe(&self, recipe_ah: ArchetypeHandle) -> Option<config::Recipe<&'static config::Archetype>> {
+        self
+            .get_recipe_raw(recipe_ah)
+            .and_then(|x| x.lookup_handles())
     }
 
     pub fn from_av(av: &AttributeValue) -> Result<Self, AttributeParseError> {
@@ -414,6 +593,24 @@ impl Plant {
                 Some(c) => Some(Craft::from_av(c)?),
                 None => None,
             },
+            effects: match m.get("effects") {
+                Some(e) => {
+                    e
+                        .l
+                        .as_ref()
+                        .ok_or(WronglyTypedField("effects"))?
+                        .iter()
+                        .filter_map(|v| match Effect::from_av(v) {
+                            Ok(s) => return Some(s),
+                            Err(e) => {
+                                log::error!("error parsing effects item: {}", e);
+                                None
+                            },
+                        })
+                        .collect::<Vec<Effect>>()
+                }
+                None => Default::default(),
+            },
             pedigree: m
                 .get("pedigree")
                 .ok_or(MissingField("pedigree"))?
@@ -432,6 +629,7 @@ impl Plant {
                     None
                 })
                 .collect(),
+            queued_xp_bonus: 0,
         })
     }
 
@@ -461,6 +659,13 @@ impl Plant {
                         },
                     ),
                     (
+                        "effects".to_string(),
+                        AttributeValue {
+                            l: Some(self.effects.iter().cloned().map(|e| e.into_av()).collect()),
+                            ..Default::default()
+                        },
+                    ),
+                    (
                         "pedigree".to_string(),
                         AttributeValue {
                             l: Some(self.pedigree.iter().cloned().map(|sg| sg.into()).collect()),
@@ -486,7 +691,7 @@ impl Plant {
 #[derive(Clone, Debug)]
 pub struct NeighborBonuses(Vec<(
     Option<uuid::Uuid>,
-    config::ArchetypeHandle,
+    config::KeepPlants<config::ArchetypeHandle>,
     (config::PlantAdvancement, config::PlantAdvancementKind),
 )>);
 impl NeighborBonuses {
@@ -502,7 +707,7 @@ impl NeighborBonuses {
             // coming from different tiles, if the tile is known.
             // if the tile isn't known, the bonus will still apply if the archetype
             // handle matches.
-            .filter(|(from, o_ah, _)| *o_ah == ah && match from {
+            .filter(|(from, keep_plants, _)| keep_plants.allows(&ah) && match from {
                 Some(f) => *f != tile_id,
                 None => true
             })
@@ -511,7 +716,7 @@ impl NeighborBonuses {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Hacksteader {
     pub user_id: String,
     pub profile: Profile,
@@ -565,35 +770,42 @@ impl Hacksteader {
             .filter_map(|tile| Some((tile.id, tile.plant.as_ref()?)))
             .flat_map(|(steader, plant)| {
                 plant
-                    .advancements
-                    .unlocked(plant.xp)
+                    .unlocked_advancements(std::iter::empty())
                     .filter_map(move |adv| {
                         Some((
                             Some(steader.clone()),
-                            plant.archetype_handle,
+                            config::KeepPlants::Only(vec![plant.archetype_handle]),
                             unsheath_neighbor(adv)?,
                         ))
                     })
             })
             .chain(
-                self.gotchis.iter().filter_map(|g| {
-                    let (name, effect) = g.inner.plant_effects.as_ref()?;
-                    Some((
-                        None,
-                        CONFIG.find_plant_handle(&name).expect("unknown handle"),
-                        (effect.clone(), effect.kind.clone())
-                    ))
+                self.gotchis.iter().flat_map(|g| {
+                    g
+                        .inner
+                        .plant_effects
+                        .iter()
+                        .map(|spa| (
+                            None,
+                            spa.keep_plants.lookup_handles().unwrap(),
+                            (spa.advancement.clone(), spa.advancement.kind.clone())
+                        ))
                 })
             )
             .chain(
-                self.inventory.iter().filter_map(|i| {
-                    let (name, effect) = i.kind.keepsake()?.plant_effects.as_ref()?;
-                    Some((
-                        None,
-                        CONFIG.find_plant_handle(&name).expect("unknown handle"),
-                        (effect.clone(), effect.kind.clone())
-                    ))
-                })
+                self
+                    .inventory
+                    .iter()
+                    .filter_map(|i| Some(i.kind.keepsake()?.plant_effects.as_ref()))
+                    .flat_map(|plant_effects: &Vec<_>| {
+                        plant_effects
+                            .iter()
+                            .map(|spa| (
+                                None,
+                                spa.keep_plants.lookup_handles().unwrap(),
+                                (spa.advancement.clone(), spa.advancement.kind.clone())
+                            ))
+                    })
             )
             .collect())
     }
@@ -612,6 +824,25 @@ impl Hacksteader {
         })
         .await
         .map(|_| ())
+    }
+
+    pub async fn spawn_possession(
+        db: &DynamoDbClient,
+        receiver: String,
+        archetype_handle: ArchetypeHandle
+    ) -> Result<(), RusotoError<PutItemError>> {
+        Hacksteader::give_possession(
+            db,
+            receiver.clone(),
+            &Possession::new(
+                archetype_handle,
+                possess::Owner {
+                    id: receiver.clone(),
+                    acquisition: possess::Acquisition::spawned(),
+                },
+            ),
+        )
+        .await
     }
 
     #[allow(dead_code)]

@@ -1,4 +1,4 @@
-use core::{market::Sale, Category, Key, Possession};
+use hcor::{market::Sale, Category, Key, Possession};
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 
 use std::env::var;
@@ -35,7 +35,7 @@ pub async fn market_search(
 ) -> Result<Vec<(Sale, Possession)>, String> {
     let query = db
         .query(rusoto_dynamodb::QueryInput {
-            table_name: core::TABLE_NAME.to_string(),
+            table_name: hcor::TABLE_NAME.to_string(),
             index_name: Some("cat_price_index".to_string()),
             key_condition_expression: Some("cat = :sale_cat".to_string()),
             expression_attribute_values: Some(
@@ -95,7 +95,7 @@ pub async fn place_on_market(
             .collect(),
         ),
         update_expression: Some("SET price = :sale_price, market_name = :new_name".to_string()),
-        table_name: core::TABLE_NAME.to_string(),
+        table_name: hcor::TABLE_NAME.to_string(),
         ..Default::default()
     })
     .await
@@ -110,7 +110,7 @@ pub async fn take_off_market(db: &DynamoDbClient, key: Key) -> Result<(), String
     db.update_item(rusoto_dynamodb::UpdateItemInput {
         key: key.clone().into_item(),
         update_expression: Some("REMOVE price, market_name".to_string()),
-        table_name: core::TABLE_NAME.to_string(),
+        table_name: hcor::TABLE_NAME.to_string(),
         ..Default::default()
     })
     .await

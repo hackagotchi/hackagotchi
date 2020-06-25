@@ -3,10 +3,10 @@
 #![feature(try_trait)]
 #![recursion_limit = "512"]
 use config::CONFIG;
-use core::config;
-use core::frontend::emojify;
-use core::possess;
-use core::{Category, Key};
+use hcor::config;
+use hcor::frontend::emojify;
+use hcor::possess;
+use hcor::{Category, Key};
 use crossbeam_channel::Sender;
 use log::*;
 use possess::{Possessed, Possession};
@@ -18,6 +18,7 @@ use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::convert::TryInto;
+use std::collections::HashMap;
 
 pub mod banker;
 pub mod event;
@@ -28,14 +29,15 @@ mod yank_config;
 use hacksteader::Hacksteader;
 
 pub fn dyn_db() -> DynamoDbClient {
-    DynamoDbClient::new_with(
-        {
-            let mut c = rusoto_core::HttpClient::new().unwrap();
-            c.local_agent("http://localhost:8000".to_string());
-            c
-        },
-        rusoto_credential::EnvironmentProvider::default(),
-        rusoto_core::Region::UsEast1
+    DynamoDbClient::new(
+        if *LOCAL_DB {
+            rusoto_core::Region::Custom {
+                name: "local".to_string(),
+                endpoint: "http://localhost:8000".to_string(),
+            }
+        } else {
+            rusoto_core::Region::UsEast1
+        }
     )
 }
 
@@ -98,6 +100,199 @@ pub async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String
     Ok(())
 }
 
+async fn gift_dm(giver: &str, new_owner: &str, possession: &Possession, count: usize) -> Result<(), String> {
+    dm_blocks(new_owner.to_string(), {
+        // TODO: with_capacity optimization
+        let mut blocks = vec![
+            json!({
+                "type": "section",
+                "text": mrkdwn(format!(
+                    "<@{}> has been so kind as to gift you {} {} _{}_!",
+                    giver,
+                    match count {
+                        1 => "a".to_string(),
+                        other => format!("*{}*", other),
+                    },
+                    emojify(&possession.name),
+                    possession.nickname()
+                ))
+            }),
+            json!({ "type": "divider" }),
+        ];
+        let page = PossessionPage {
+            interactivity: Interactivity::Read,
+            credentials: Credentials::Owner,
+            possession: possession.clone(),
+        };
+        blocks.append(&mut page.blocks());
+        blocks.push(json!({ "type": "divider" }));
+        blocks.push(comment(format!(
+            "Manage all of your possessions like this one at your <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>",
+            *APP_ID,
+        )));
+        blocks
+    })
+    .await
+}
+
+/// `push` should be true if this modal is being put on top of an existing one.
+fn gotchi_block(
+    gotchi: Possessed<possess::Gotchi>,
+    interactivity: Interactivity,
+    credentials: Credentials,
+    push: bool
+) -> Value {
+    json!({
+        "type": "section",
+        "text": mrkdwn(format!(
+            "_{} ({}, {})_",
+            emojify(&gotchi.name),
+            gotchi.name,
+            match gotchi.inner.hatch_table {
+                None => format!("{} happiness", gotchi.inner.base_happiness),
+                Some(_) => "ready to hatch!".to_string(),
+            }
+        )),
+        "accessory": {
+            "type": "button",
+            "style": "primary",
+            "text": plain_text(&gotchi.inner.nickname),
+            "value": serde_json::to_string(&PossessionPage {
+                possession: gotchi.into_possession(),
+                interactivity,
+                credentials,
+            }).unwrap(),
+            "action_id": match push {
+                true => "push_possession_page",
+                _ => "possession_page",
+            }
+        }
+    })
+}
+
+fn inventory_occurences(inventory: Vec<Possession>) -> HashMap<String, Vec<Possession>> {
+    let mut o = HashMap::new();
+
+    for possession in inventory.into_iter() {
+        o
+            .entry(possession.name.clone())
+            .or_insert(vec![])
+            .push(possession)
+    }
+
+    o
+}
+
+fn inventory_section(
+    inv_occurrences: HashMap<String, Vec<Possession>>,
+    interactivity: Interactivity,
+    credentials: Credentials,
+    push: bool,
+    user_id: String,
+) -> Vec<Value> {
+    let mut blocks = vec![];
+
+    blocks.push(json!({
+        "type": "section",
+        "text": mrkdwn("*Inventory*"),
+    }));
+
+    let mut inv_entries = inv_occurrences.into_iter().collect::<Vec<_>>();
+    inv_entries.sort_unstable_by_key(|(_, p)| p.last().unwrap().archetype_handle);
+    for (name, possessions) in inv_entries.into_iter() {
+        // this is safe because you have to have at least one
+        // for it to end up here
+        let last = possessions.last().unwrap().clone();
+
+        if possessions.len() == 1 {
+            blocks.push(json!({
+                "type": "section",
+                "text": mrkdwn(format!(
+                    "{} _{}_",
+                    emojify(&name),
+                    name
+                )),
+                "accessory": {
+                    "type": "button",
+                    "style": "primary",
+                    "text": plain_text(&name),
+                    "value": serde_json::to_string(&PossessionPage {
+                        possession: last,
+                        interactivity,
+                        credentials,
+                    }).unwrap(),
+                    "action_id": match push {
+                        false => "possession_page",
+                        true => "push_possession_page"
+                    },
+                }
+            }));
+        } else {
+            blocks.push(json!({
+                "type": "section",
+                "text": mrkdwn(format!(
+                    "*{}* {} _{}_",
+                    possessions.len(),
+                    emojify(&name),
+                    name
+                )),
+                "accessory": {
+                    "type": "button",
+                    "style": "primary",
+                    "text": plain_text(&name),
+                    "value": serde_json::to_string(&PossessionOverviewPage {
+                        source: PossessionOverviewSource::Hacksteader(user_id.clone()),
+                        page: 0,
+                        item_name: name,
+                        interactivity,
+                        credentials,
+                    }).unwrap(),
+                    "action_id": match push {
+                        false => "possession_overview_page",
+                        true => "push_possession_overview_page"
+                    },
+                }
+            }));
+        }
+    }
+
+    blocks
+}
+
+fn gotchi_section(
+    gotchis: Vec<Possessed<possess::Gotchi>>,
+    interactivity: Interactivity,
+    credentials: Credentials,
+    push: bool
+) -> Vec<Value> {
+    let mut blocks = vec![];
+
+    blocks.push(json!({
+        "type": "section",
+        "text": mrkdwn(match gotchis.len() {
+            1 => "*Your Hackagotchi*".into(),
+            _ => format!("*Your {} Hackagotchi*", gotchis.len())
+        }),
+    }));
+
+    let total_happiness = gotchis.iter().map(|g| g.inner.base_happiness).sum::<u64>();
+
+    for g in gotchis.into_iter().take(20) {
+        blocks.push(gotchi_block(g, interactivity, credentials, push));
+    }
+
+    blocks.push(json!({
+        "type": "section",
+        "text": mrkdwn(format!("Total happiness: *{}*", total_happiness))
+    }));
+    blocks.push(comment(
+        "The total happiness of all your gotchi is equivalent to the \
+         amount of GP you'll get at the next Harvest.",
+    ));
+
+    blocks
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum PossessionOverviewSource {
     Hacksteader(String),
@@ -115,12 +310,21 @@ pub struct PossessionOverviewPage {
 impl PossessionOverviewPage {
     const PAGE_SIZE: usize = 20;
 
+    fn title(&self) -> String {
+        let mut title = self.item_name.clone();
+        if title.len() > 24 {
+            title.truncate(24 - 3);
+            title.push_str("...");
+        }
+        title
+   }
+
     async fn modal(self, trigger_id: String, method: &'static str) -> Result<Modal, String> {
         Ok(Modal {
             callback_id: self.callback_id(),
             blocks: self.blocks().await?,
             submit: None,
-            title: self.item_name,
+            title: self.title(),
             method: method.to_string(),
             trigger_id,
             private_metadata: String::new(),
@@ -183,6 +387,7 @@ impl PossessionOverviewPage {
         };
         // caching this so I can use it later after .into_iter() is called
         let inventory_len = inventory.len();
+        let first_item = inventory.first().cloned();
 
         let mut blocks = inventory
             .into_iter()
@@ -195,7 +400,7 @@ impl PossessionOverviewPage {
                         "{} _{}_{}",
                         emojify(&item_name),
                         item_name,
-                        if let Some(core::market::Sale { price, .. }) = possession.sale {
+                        if let Some(hcor::market::Sale { price, .. }) = possession.sale {
                             match source {
                                 PossessionOverviewSource::Hacksteader(..) => {
                                     format!(" (selling at *{}gp*)", price)
@@ -230,6 +435,14 @@ impl PossessionOverviewPage {
                 })
             })
             .collect::<Vec<_>>();
+
+        if let Some(p) = first_item.filter(|p| p.kind.is_keepsake()) {
+            blocks.push(comment(format!(
+                "hmm, maybe \"*/hgive <@U01581HFAGZ> {} {}*\" is in your future?",
+                inventory_len,
+                emojify(&p.name)
+            )));
+        }
 
         let needs_back_page = *page != 0;
         let needs_next_page = inventory_len > Self::PAGE_SIZE * (page + 1);
@@ -280,12 +493,21 @@ pub struct PossessionPage {
 }
 
 impl PossessionPage {
+    fn title(&self) -> String {
+        let mut title =  self.possession.nickname().to_string();
+        if title.len() > 24 {
+            title.truncate(24 - 3);
+            title.push_str("...");
+        }
+        title
+    }
+
     fn modal(self, trigger_id: String, method: &'static str) -> Modal {
         Modal {
             callback_id: self.callback_id(),
             blocks: self.blocks(),
             submit: self.submit(),
-            title: self.possession.nickname().to_string(),
+            title: self.title(),
             method: method.to_string(),
             trigger_id: trigger_id,
             private_metadata: serde_json::to_string(&self.possession.key()).unwrap(),
@@ -297,7 +519,7 @@ impl PossessionPage {
             callback_id: self.callback_id(),
             blocks: self.blocks(),
             submit: self.submit(),
-            title: self.possession.nickname().to_string(),
+            title: self.title(),
             private_metadata: serde_json::to_string(&self.possession.key()).unwrap(),
             trigger_id,
             view_id,
@@ -367,10 +589,18 @@ impl PossessionPage {
             }
         };
 
-        if self.possession.kind.is_gotchi() {
+        if let Some(g) = possession.kind.gotchi() {
             blocks.push(actions(
                 "gotchi",
-                &[("Nickname", Some(json!(possession.nickname())))],
+                &{
+                    let mut a = vec![("Nickname", Some(json!(possession.nickname())))];
+                    if g.hatch_table.is_some() {
+                        a.push(("Hatch", Some(json!(
+                            serde_json::to_string(&possession.id).unwrap()
+                        ))));
+                    }
+                    a
+                }
             ));
         }
 
@@ -508,6 +738,10 @@ fn hackstead_blocks(
         ..
     } = hs;
 
+    let inv_occurrences = inventory_occurences(inventory.clone());
+
+    let bottom_gotchi = gotchis.len() < 5;
+    //let bottom_inventory = inv_occurrences.len() < 5;
     let hs_adv = profile.current_advancement();
     let next_hs_adv = profile.next_advancement();
     let hs_adv_sum = profile.advancements_sum();
@@ -544,11 +778,47 @@ fn hackstead_blocks(
     }
     blocks.push(comment(format!("Last Advancement: \"{}\"", hs_adv.title)));
     blocks.push(comment(format!(
-        "If you had enough Land Deeds, you could buy {} pieces of land",
+        concat!(
+            "The level of your hackstead allows you to redeem ",
+            "Land Deeds for up to {} more pieces of land.",
+        ),
         hs_adv_sum.land
     )));
 
     blocks.push(json!({ "type": "divider" }));
+
+    /*
+    if !bottom_gotchi || !bottom_inventory {
+        let mut actions = vec![];
+
+        if !bottom_gotchi {
+            actions.push(json!({
+                "type": "button",
+                "text": plain_text("Hackagotchi"),
+                "style": "primary",
+                "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
+                "action_id": "gotchi_overview",
+            }));
+        }
+
+        if !bottom_inventory {
+            actions.push(json!({
+                "type": "button",
+                "text": plain_text("Inventory"),
+                "style": "primary",
+                "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
+                "action_id": "inventory_overview",
+            }));
+        }
+
+        blocks.push(json!({
+            "type": "actions",
+            "elements": actions
+        }));
+
+        blocks.push(json!({ "type": "divider" }));
+    }*/
+
     let tiles_owned = land.len();
     for tile in land.into_iter() {
         if let Some(p) = tile.plant.as_ref() {
@@ -558,8 +828,8 @@ fn hackstead_blocks(
                     tile.id,
                     p.archetype_handle
                 );
-            let sum = p.advancements.sum(p.xp, neighbor_bonuses.iter());
-            let unboosted_sum = p.advancements.raw_sum(p.xp);
+            let sum = p.advancements_sum(neighbor_bonuses.iter());
+            let unboosted_sum = p.neighborless_advancements_sum(std::iter::empty());
             let ca = p.current_advancement();
 
             blocks.push(json!({
@@ -567,11 +837,22 @@ fn hackstead_blocks(
                 "text": mrkdwn({
                     let mut s = String::new();
                     s.push_str(&format!(
-                        "*{}* - _{}_ - *{}lvl* - {}xp\n\n",
+                        "*{}* - _{}_ - *{}lvl* - {}xp {}\n\n",
                         p.name,
                         ca.achiever_title,
                         p.advancements.current_position(p.xp),
-                        p.xp
+                        p.xp,
+                        p
+                            .effects
+                            .iter()
+                            .filter_map(|e| Some(emojify(
+                                &CONFIG
+                                    .possession_archetypes
+                                    .get(e.item_archetype_handle)?
+                                    .name
+                            )))
+                            .collect::<Vec<String>>()
+                            .join("")
                     ));
                     if let Some(na) = p.next_advancement() {
                         let (have, need) = (p.xp - unboosted_sum.xp, na.xp);
@@ -591,36 +872,31 @@ fn hackstead_blocks(
                     "alt_text": format!("A healthy, growing {}!", p.name),
                 }
             }));
-            if !sum.yields.is_empty() {
+            if let (false, Some(base_yield_duration)) = (sum.yields.is_empty(), p.base_yield_duration) {
                 blocks.push(json!({
                     "type": "section",
                     "text": mrkdwn(format!(
                         "*Yield*\n{}  {:.3} minutes to go",
-                        progress_bar(30, 1.0 - p.until_yield/p.base_yield_duration),
+                        progress_bar(30, 1.0 - p.until_yield/base_yield_duration),
                         (p.until_yield / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32
                     )),
                     "accessory": {
                         "type": "button",
                         "text": plain_text("Yield Stats"),
-                        "value": serde_json::to_string(&(user_id.to_string(), tile.id)).unwrap(),
+                        "value": serde_json::to_string(&(&user_id, tile.id)).unwrap(),
                         "action_id": "yield_stats",
                     }
                 }));
             }
             if !sum.recipes.is_empty() {
-                let recipes = sum.recipes.iter().map(|r| (r.satisfies(&inventory), r));
-                if let Some(craft) = &p.craft {
+                if let (Some(craft), Some(recipe)) = (p.craft.as_ref(), p.current_recipe()) {
                     blocks.push(json!({
                         "type": "section",
                         "text": mrkdwn(format!(
                             "*Crafting {}*\n{}  {:.3} minutes to go",
-                            CONFIG
-                                .possession_archetypes
-                                .get(craft.makes)
-                                .map(|x| x.name.as_str())
-                                .unwrap_or("unknown"),
-                            progress_bar(30, 1.0 - craft.until_finish/craft.total_cycles),
-                            (craft.until_finish / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32
+                            recipe.title(),
+                            progress_bar(30, 1.0 - craft.until_finish/recipe.time),
+                            (craft.until_finish / sum.crafting_speed_multiplier) / FARM_CYCLES_PER_MIN as f32
                         ))
                     }));
                 } else {
@@ -634,10 +910,7 @@ fn hackstead_blocks(
                         "accessory": {
                             "type": "button",
                             "text": plain_text("Crafting"),
-                            "value": serde_json::to_string(&(
-                                &tile.id,
-                                recipes.collect::<Vec<_>>()
-                            )).unwrap(),
+                            "value": serde_json::to_string(&(tile.id, &user_id)).unwrap(),
                             "action_id": "crafting",
                         }
                     }));
@@ -663,7 +936,17 @@ fn hackstead_blocks(
                     .iter()
                     .cloned()
                     .filter_map(|x| {
-                        x.kind.keepsake()?.item_application_effect.as_ref()?;
+                        x
+                            .kind
+                            .keepsake()?
+                            .item_application
+                            .as_ref()
+                            .filter(|a| {
+                                a
+                                    .effects
+                                    .iter()
+                                    .any(|e| e.keep_plants.allows(&p.name))
+                            })?;
                         Some(x.id.to_simple().to_string())
                     })
                     .collect();
@@ -673,7 +956,10 @@ fn hackstead_blocks(
                         "type": "button",
                         "text": plain_text("Apply Item"),
                         "style": "primary",
-                        "value": serde_json::to_string(&(tile.id.to_simple().to_string(), applicables)).unwrap(),
+                        "value": serde_json::to_string(&(
+                            tile.id.to_simple().to_string(),
+                            user_id.clone()
+                        )).unwrap(),
                         "action_id": "item_apply",
                     }))
                 }
@@ -763,109 +1049,30 @@ fn hackstead_blocks(
         }));
     }
 
+    /*if bottom_inventory {*/
     blocks.push(json!({ "type": "divider" }));
 
-    if inventory.len() > 0 {
-        blocks.push(json!({
-            "type": "section",
-            "text": mrkdwn("*Inventory*"),
-        }));
-
-        let mut occurences: std::collections::HashMap<String, Vec<Possession>> = Default::default();
-
-        for possession in inventory.into_iter() {
-            occurences
-                .entry(possession.name.clone())
-                .or_insert(vec![])
-                .push(possession)
-        }
-
-        let mut inv_entries = occurences.into_iter().collect::<Vec<_>>();
-        inv_entries.sort_unstable_by_key(|(_, p)| p.last().unwrap().archetype_handle);
-        for (name, possessions) in inv_entries.into_iter() {
-            // this is safe because you have to have at least one
-            // for it to end up here
-            let last = possessions.last().unwrap().clone();
-
-            if possessions.len() == 1 {
-                blocks.push(json!({
-                    "type": "section",
-                    "text": mrkdwn(format!(
-                        "{} _{}_",
-                        emojify(&name),
-                        name
-                    )),
-                    "accessory": {
-                        "type": "button",
-                        "style": "primary",
-                        "text": plain_text(&name),
-                        "value": serde_json::to_string(&PossessionPage {
-                            possession: last,
-                            interactivity,
-                            credentials,
-                        }).unwrap(),
-                        "action_id": "possession_page",
-                    }
-                }));
-            } else {
-                blocks.push(json!({
-                    "type": "section",
-                    "text": mrkdwn(format!(
-                        "*{}* {} _{}_",
-                        possessions.len(),
-                        emojify(&name),
-                        name
-                    )),
-                    "accessory": {
-                        "type": "button",
-                        "style": "primary",
-                        "text": plain_text(&name),
-                        "value": serde_json::to_string(&PossessionOverviewPage {
-                            source: PossessionOverviewSource::Hacksteader(user_id.clone()),
-                            page: 0,
-                            item_name: name,
-                            interactivity,
-                            credentials,
-                        }).unwrap(),
-                        "action_id": "possession_overview_page",
-                    }
-                }));
-            }
-        }
-    } else {
+    if inv_occurrences.is_empty() {
         blocks.push(comment("Your inventory is empty"));
+    } else {
+        blocks.append(&mut inventory_section(
+            inv_occurrences,
+            interactivity,
+            credentials,
+            false,
+            user_id.clone(),
+        ));
     }
+    /*}*/
 
-    if gotchis.len() > 0 {
+    if bottom_gotchi && gotchis.len() > 0 {
         blocks.push(json!({ "type": "divider" }));
 
-        blocks.push(json!({
-            "type": "section",
-            "text": mrkdwn(match gotchis.len() {
-                1 => "*Your Hackagotchi*".into(),
-                _ => format!("*Your {} Hackagotchi*", gotchis.len())
-            }),
-        }));
-
-        let total_happiness = gotchis.iter().map(|g| g.inner.base_happiness).sum::<u64>();
-
-        blocks.push(json!({
-            "type": "actions",
-            "elements": [{
-                "type": "button",
-                "text": plain_text("See Gotchi"),
-                "style": "primary",
-                "value": serde_json::to_string(&(&user_id, interactivity, credentials, false)).unwrap(),
-                "action_id": "gotchi_overview",
-            }],
-        }));
-        blocks.push(json!({
-            "type": "section",
-            "text": mrkdwn(format!("Total happiness: *{}*", total_happiness))
-        }));
-        blocks.push(comment(
-            "The total happiness of all your gotchi is equivalent to the \
-             amount of GP you'll get at the next Harvest.",
+        blocks.append(&mut gotchi_section(
+            gotchis,
+            interactivity,
+            credentials,
+            false
         ));
     }
 
@@ -889,27 +1096,31 @@ fn hackstead_blocks(
     blocks
 }
 
-macro_rules! hacksteader_opening_blurb { ( $hackstead_cost:expr ) => { format!(
+macro_rules! hacksteader_opening_blurb { () => { format!(
 "
-*Your Own Hackagotchi Hackstead!*
+*Build Your Own Hackstead With Hackagotchi!*
 
-:corn: Grow your own Farmables which make Hackagotchi happier!
-:sparkling_heart: Earn passive income by collecting adorable Hackagotchi!
-:money_with_wings: Buy, sell and trade Farmables and Hackagotchi at an open market!
 
-Hacksteading costs *{} GP*.
-As a Hacksteader, you'll have a plot of land on which to grow your own Farmables which make Hackagotchi happier. \
-Happier Hackagotchi generate more passive income! \
-You can also buy, sell, and trade Farmables and Hackagotchi for GP on an open market space. \
+:ear_of_rice: *Grow plants* to *produce and craft* cool items!
+
+:adorpheus: Have a chance to *hatch Hackagotchi* that can help you *earn money* and *boost crops*!
+
+:money_with_wings: *Buy and barter* with other Hack Clubbers on a *real-time market*!
+
+
+_Hacksteading is *free*!_
+
+Each Hacksteader starts off with a :dirt: *single plot of land* to grow crops \
+and a :nest_egg: *Nest Egg* to get started! \
+Grow your Hacksteading empire by starting today!
 ",
-$hackstead_cost
 ) } }
 
 fn hackstead_explanation_blocks() -> Vec<Value> {
     vec![
         json!({
             "type": "section",
-            "text": mrkdwn(hacksteader_opening_blurb!(*HACKSTEAD_PRICE)),
+            "text": mrkdwn(hacksteader_opening_blurb!()),
         }),
         json!({
             "type": "actions",
@@ -920,8 +1131,11 @@ fn hackstead_explanation_blocks() -> Vec<Value> {
                 "text": plain_text("Monopolize on Adorableness?"),
                 "confirm": {
                     "style": "danger",
-                    "title": plain_text("Do you have what it takes"),
-                    "text": mrkdwn("to be a Hackagotchi Hacksteader?"),
+                    "title": plain_text("Let's Hackstead, Fred!"),
+                    "text": mrkdwn(
+                         "(P.S. once you click that button, \
+                         expect a direct message from banker on what to do next!)"
+                    ),
                     "deny": plain_text("I'm short on GP"),
                     "confirm": plain_text("LET'S HACKSTEAD, FRED!"),
                 }
@@ -950,7 +1164,6 @@ fn hacksteader_greeting_blocks(
 
 async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
     use config::ArchetypeHandle;
-    use std::collections::HashMap;
 
     let sales = market::market_search(&dyn_db(), cat)
         .await
@@ -1029,12 +1242,12 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
                 }))
                 .chain(std::iter::once(json!({ "type": "divider" })))
             })
-            .take(entry_count * 2 - 1),
+            .take((entry_count * 2).saturating_sub(1)),
     )
     .collect()
 }
 
-#[derive(FromForm, Debug)]
+#[derive(FromForm, Debug, Clone)]
 struct SlashCommand {
     token: String,
     team_id: String,
@@ -1076,9 +1289,7 @@ async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), 
 }
 
 pub async fn stateofsteading_blocks() -> Vec<Value> {
-    use std::collections::HashMap;
-
-    let profiles = core::Profile::fetch_all(&dyn_db()).await.unwrap();
+    let profiles = hcor::Profile::fetch_all(&dyn_db()).await.unwrap();
     let tiles = hacksteader::Tile::fetch_all(&dyn_db()).await.unwrap();
 
     struct PlantEntry {
@@ -1087,7 +1298,7 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
         level: usize,
     }
 
-    let mut archetype_occurences: HashMap<config::PlantArchetype, Vec<PlantEntry>> =
+    let mut archetype_occurrences: HashMap<config::PlantArchetype, Vec<PlantEntry>> =
         Default::default();
 
     for tile in tiles.iter() {
@@ -1096,7 +1307,7 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
             None => continue,
         };
 
-        archetype_occurences
+        archetype_occurrences
             .entry((**plant).clone())
             .or_default()
             .push(PlantEntry {
@@ -1120,7 +1331,7 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
             ),
             profiles.len(),
             tiles.len(),
-            archetype_occurences
+            archetype_occurrences
                 .iter()
                 .map(|(plant_archetype, plants)| format!(
                     "*{}* _{}_ plants",
@@ -1137,7 +1348,7 @@ pub async fn stateofsteading_blocks() -> Vec<Value> {
         }
     }))
     .chain(
-        archetype_occurences
+        archetype_occurrences
             .iter_mut()
             .map(|(plant_archetype, plants)| {
                 plants.sort_by_key(|p| p.level);
@@ -1188,6 +1399,198 @@ async fn stateofsteading<'a>(slash_command: LenientForm<SlashCommand>) -> Result
     Ok(())
 }
 
+#[post("/hgive", data = "<slash_command>")]
+async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
+    use regex::Regex;
+
+    fn res<S: std::string::ToString>(s: S) -> Json<Value> {
+        info!("{}", s.to_string());
+        Json(json!({
+            "blocks": [{
+                "type": "section",
+                "text": mrkdwn(s),
+            }],
+            "response_type": "ephemeral",
+        }))
+    }
+
+    lazy_static::lazy_static!(
+        static ref HGIVE: Regex = Regex::new("<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):").unwrap();
+    );
+
+    info!("trying /give {}", slash_command.text);
+    let c = match HGIVE.captures(&slash_command.text) {
+        Some(c) => c,
+        None => return res("Invalid syntax!"),
+    };
+    info!("{:?}", c);
+    let receiver = match c.get(1) {
+        Some(s) => s.as_str().to_string(),
+        None => return res("Couldn't parse receiver?"),
+    };
+    let amount = c.get(2).and_then(|x| x.as_str().trim().parse().ok()).unwrap_or(1);
+    let possession_name = match c.get(3) {
+        Some(a) => a.as_str().replace("_", " ").to_lowercase(),
+        None => return res("Couldn't parse possession name?"),
+    };
+    let (archetype_handle, possession_archetype) = match CONFIG
+            .possession_archetypes
+            .iter()
+            .enumerate()
+            .find(|(_, x)| x.name.to_lowercase() == possession_name)
+    {
+        Some(ah) => ah,
+        None => return res(format!("no possession by name of {}", possession_name))
+    };
+
+    let user = slash_command.user_id.to_string();
+    let hs = match Hacksteader::from_db(&dyn_db(), user.clone()).await {
+        Ok(hs) => hs,
+        Err(_) => return res(format!(
+            concat!(
+                "Can't give {}; ",
+                "you don't have a hackstead! ",
+                "try /hstead to get started!"
+            ),
+            slash_command.text
+        ))
+    };
+
+    let possessions = hs
+        .inventory
+        .into_iter()
+        .filter(|p| p.archetype_handle == archetype_handle)
+        .take(amount)
+        .collect::<Vec<possess::Possession>>();
+
+    if possessions.len() != amount {
+        return match possessions.len() {
+            0 => res(format!("You don't have any {}", possession_name)),
+            more => res(format!(
+                "You only have {} {}, not {}!",
+                more,
+                possession_name,
+                amount
+            ))
+        }
+    } else if amount == 0 {
+        res("Well, I mean ... that's not really anything but ... ok")
+    } else {
+        let res_msg = json!({
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        "<@{}> shall soon happen across *{}* of <@{}>'s :{}: _{}_!",
+                        receiver,
+                        amount,
+                        user,
+                        possession_name.replace(" ", "_"),
+                        possession_archetype.name,
+                    )),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!(
+                            "http://{}/gotchi/img/misc/{}.png",
+                            *URL,
+                            filify(&possession_name)
+                        ),
+                        "alt_text": "hackagotchi img",
+                    }
+                },
+                comment("EY BRO TAEK DIS N DONT TELL MOM, OwO")
+            ],
+            "response_type": "in_channel",
+        });
+
+        tokio::spawn(async move {
+            info!("I mean this happens?");
+
+            let _ = gift_dm(
+                &user,
+                &receiver,
+                possessions.first().unwrap(),
+                amount
+            )
+            .await
+            .map_err(|e| error!("{}", e));
+
+            for possession in possessions {
+                match Hacksteader::transfer_possession(
+                    &dyn_db(),
+                    receiver.clone(),
+                    possess::Acquisition::Trade,
+                    Key::misc(possession.id),
+                ).await {
+                    Err(e) => {
+                        let _ = banker::message(e).await.map_err(|e| error!("{}", e));
+                    },
+                    Ok(_) => {}
+                }
+            }
+        });
+
+        Json(res_msg)
+    }
+}
+
+#[post("/egghatchwhen", data = "<slash_command>")]
+async fn egghatchwhen<'a>(
+    slash_command: LenientForm<SlashCommand>,
+    to_farming: State<'_, Sender<FarmingInputEvent>>,
+) -> Json<Value> {
+    use rand::seq::SliceRandom;
+    let SlashCommand { text, user_id, .. } = (*slash_command).clone();
+
+    if text != "" {
+        return Json(json!({
+            "response_type": "ephemeral",
+        }))
+    }
+
+    fn res<S: std::string::ToString>(s: S) -> Json<Value> {
+        Json(json!({
+            "blocks": [{
+                "type": "section",
+                "text": mrkdwn(s),
+            }],
+            "response_type": "in_channel",
+        }))
+    }
+
+    let user = user_id.to_string();
+    let hs = match Hacksteader::from_db(&dyn_db(), user.clone()).await {
+        Ok(hs) => hs,
+        Err(_) => return res(concat!(
+            "Can't open one of your eggs; ",
+            "you don't have a hackstead! ",
+            "try /hstead to get started!"
+        ))
+    };
+
+    let egg_search = hs
+        .gotchis
+        .into_iter()
+        .filter(|p| p.inner.hatch_table.is_some())
+        .map(|p| p.id)
+        .collect::<Vec<uuid::Uuid>>()
+        .choose(&mut rand::thread_rng())
+        .map(|id| id.clone());
+    let egg_id = match egg_search {
+        None => return res("You don't have any eggs to hatch!"),
+        Some(id) => id,
+    };
+
+    to_farming
+        .send(FarmingInputEvent::ActivateUser(user.clone()))
+        .unwrap();
+
+    to_farming
+        .send(FarmingInputEvent::HatchEgg(egg_id, user.clone()))
+        .unwrap();
+
+    res("Selected one of your eggs and hatched it!")
+}
 #[post("/hackstead", data = "<slash_command>")]
 async fn hackstead<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     debug!("{:#?}", slash_command);
@@ -1463,7 +1866,7 @@ async fn action_endpoint(
                 // update the nickname in the DB
                 let db = dyn_db();
                 db.update_item(rusoto_dynamodb::UpdateItemInput {
-                    table_name: core::TABLE_NAME.to_string(),
+                    table_name: hcor::TABLE_NAME.to_string(),
                     key: key.into_item(),
                     update_expression: Some("SET nickname = :new_name".to_string()),
                     expression_attribute_values: Some(
@@ -1563,8 +1966,7 @@ async fn action_endpoint(
                     possess::Acquisition::Trade,
                     key,
                 )
-                .await
-                .map_err(|e| e)?;
+                .await?;
 
                 // update the home tab
                 // TODO: make this not read from the database
@@ -1573,33 +1975,7 @@ async fn action_endpoint(
                 let possession = hacksteader::get_possession(&dyn_db(), key).await?;
 
                 // DM the new_owner about their new acquisition!
-                dm_blocks(new_owner.clone(), {
-                    // TODO: with_capacity optimization
-                    let mut blocks = vec![
-                        json!({
-                            "type": "section",
-                            "text": mrkdwn(format!(
-                                "<@{}> has been so kind as to gift you a {} _{}_!",
-                                user.id,
-                                emojify(&possession.name),
-                                possession.nickname()
-                            ))
-                        }),
-                        json!({ "type": "divider" }),
-                    ];
-                    let page = PossessionPage {
-                        interactivity: Interactivity::Read,
-                        credentials: Credentials::Owner,
-                        possession,
-                    };
-                    blocks.append(&mut page.blocks());
-                    blocks.push(json!({ "type": "divider" }));
-                    blocks.push(comment(format!(
-                        "Manage all of your possessions like this one at your <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>",
-                        *APP_ID,
-                    )));
-                    blocks
-                }).await?;
+                gift_dm(&user.id, new_owner, &possession, 1).await?;
 
                 // close ALL THE MODALS!!!
                 return Ok(ActionResponse::Json(Json(json!({
@@ -1611,11 +1987,14 @@ async fn action_endpoint(
 
             match view.callback_id.as_str() {
                 "crafting_confirm_modal" => {
-                    let (tile_id, recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
-                        serde_json::from_str(&view.private_metadata).unwrap();
+                    info!("crafting confirm modal");
+
+                    let (tile_id, recipe_archetype_handle): (uuid::Uuid, config::ArchetypeHandle) =
+                        serde_json::from_str(&view.private_metadata)
+                        .map_err(|e| error!("{}", e)).unwrap();
 
                     to_farming
-                        .send(FarmingInputEvent::BeginCraft { tile_id, recipe })
+                        .send(FarmingInputEvent::BeginCraft { tile_id, recipe_archetype_handle })
                         .expect("couldn't send to farming");
 
                     return Ok(ActionResponse::Json(Json(json!({
@@ -1668,7 +2047,7 @@ async fn action_endpoint(
 
                 return Ok(ActionResponse::Ok(()));
             }
-            if let Some((tile_id, item_id, item_ah)) = values
+            if let Some((tile_id, item_id)) = values
                 .get("item_apply_input")
                 .and_then(|i| i.get("item_apply_select"))
                 .and_then(|s| s.get("selected_option"))
@@ -1677,17 +2056,15 @@ async fn action_endpoint(
                 .and_then(|v| serde_json::from_str(v).ok())
             {
                 info!("applying item!");
-                let db = dyn_db();
-                Hacksteader::delete(&db, Key::misc(item_id))
-                    .await
-                    .map_err(|e| {
-                        let a = format!("couldn't remove item after applying: {}", e);
-                        error!("{}", a);
-                        a
-                    })?;
 
                 to_farming
-                    .send(FarmingInputEvent::ApplyItem(tile_id, item_ah))
+                    .send(FarmingInputEvent::ApplyItem(
+                        ItemApplication {
+                            tile: tile_id,
+                            item: item_id
+                        },
+                        user.id.clone()
+                    ))
                     .unwrap();
 
                 return Ok(ActionResponse::Ok(()));
@@ -1712,6 +2089,7 @@ async fn action_endpoint(
         .as_str()
     {
         "hackstead_confirm" => {
+            info!("confirming new user!");
             if !hacksteader::exists(&dyn_db(), i.user.id.clone()).await {
                 banker::invoice(&i.user.id, *HACKSTEAD_PRICE, "let's hackstead, fred!")
                     .await
@@ -1898,30 +2276,47 @@ async fn action_endpoint(
 
             let hs = Hacksteader::from_db(&dyn_db(), steader).await?;
 
-            let blocks = hs.gotchis.into_iter().map(|gotchi| {
-                json!({
-                    "type": "section",
-                    "text": mrkdwn(format!("_{} ({}, {} happiness)_", emojify(&gotchi.name), gotchi.name, gotchi.inner.base_happiness)),
-                    "accessory": {
-                        "type": "button",
-                        "style": "primary",
-                        "text": plain_text(&gotchi.inner.nickname),
-                        "value": serde_json::to_string(&PossessionPage {
-                            possession: gotchi.into_possession(),
-                            interactivity,
-                            credentials,
-                        }).unwrap(),
-                        "action_id": "push_possession_page",
-                    }
-                })
-            })
-            .collect();
+            let gotchi_count = hs.gotchis.len();
+            let blocks = gotchi_section(hs.gotchis, interactivity, credentials, true);
 
             Modal {
                 method: if push { "push" } else { "open" }.to_string(),
                 trigger_id: i.trigger_id,
-                callback_id: "crafting_confirm_modal".to_string(),
-                title: "Crafting Confirmation".to_string(),
+                callback_id: "gotchi_overview_modal".to_string(),
+                title: match gotchi_count {
+                    1 => "Your Hackagotchi".to_string(),
+                    more => format!("Your {} Hackagotchi", more),
+                },
+                private_metadata: action.value.to_string(),
+                blocks,
+                submit: None,
+            }
+            .launch()
+            .await?
+        }
+        "inventory_overview" => {
+            let (steader, interactivity, credentials, push):
+                (String, Interactivity, Credentials, bool) = serde_json::from_str(&action.value).unwrap();
+
+            let hs = Hacksteader::from_db(&dyn_db(), steader.clone()).await?;
+
+            let inv_count = hs.inventory.len();
+            let blocks = inventory_section(
+                inventory_occurences(hs.inventory),
+                interactivity,
+                credentials,
+                true,
+                steader.clone()
+            );
+
+            Modal {
+                method: if push { "push" } else { "open" }.to_string(),
+                trigger_id: i.trigger_id,
+                callback_id: "inventory_overview_modal".to_string(),
+                title: match inv_count {
+                    1 => "Your Item".to_string(),
+                    more => format!("Your {} Items", more),
+                },
                 private_metadata: action.value.to_string(),
                 blocks,
                 submit: None,
@@ -1931,7 +2326,7 @@ async fn action_endpoint(
         }
         "crafting_confirm" => {
             let craft_json = &action.value;
-            let (plant_id, raw_recipe): (uuid::Uuid, config::Recipe<config::ArchetypeHandle>) =
+            let (plant_id, recipe_index): (uuid::Uuid, config::ArchetypeHandle) =
                 serde_json::from_str(&craft_json).unwrap();
 
             let hs = Hacksteader::from_db(&dyn_db(), i.user.id.clone()).await?;
@@ -1958,11 +2353,18 @@ async fn action_endpoint(
                     plant.archetype_handle
                 );
 
-            let sum = plant.advancements.sum(plant.xp, neighbor_bonuses.iter());
+            let sum = plant.advancements_sum(neighbor_bonuses.iter());
 
-            let recipe = raw_recipe
-                .lookup_handles()
-                .ok_or_else(|| "invalid recipe".to_string())?;
+            let recipe = plant.get_recipe(recipe_index).ok_or_else(|| {
+                let e = format!(
+                    "can't craft unknown recipe: {} on {:?} {}xp",
+                    recipe_index,
+                    plant.name,
+                    plant.xp
+                );
+                error!("{}", e);
+                e
+            })?;
             let possible_output = recipe.makes.any();
 
             Modal {
@@ -1976,10 +2378,10 @@ async fn action_endpoint(
                     "text": mrkdwn(format!(
                         concat!(
                             "Are you sure you want your plant to ",
-                            "spend the next {:.2} minutes crafting {}",
-                            "using\n{}\n{}",
+                            "spend the next {:.2} minutes crafting {} ",
+                            "using\n\n{}\n{}",
                         ),
-                        (recipe.time / sum.yield_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
+                        (recipe.time / sum.crafting_speed_multiplier) / FARM_CYCLES_PER_MIN as f32,
                         recipe.makes,
                         recipe
                             .needs
@@ -2002,11 +2404,14 @@ async fn action_endpoint(
                     )),
                     "accessory": {
                         "type": "image",
-                        "image_url": format!("http://{}/gotchi/img/{}/{}.png",
-                            *URL,
-                            possible_output.kind.category(),
-                            filify(&possible_output.name)
-                        ),
+                        "image_url": match possible_output {
+                            Some(po) => format!("http://{}/gotchi/img/{}/{}.png",
+                                *URL,
+                                po.kind.category(),
+                                filify(&po.name)
+                            ),
+                            None => format!("http://{}/gotchi/img/icon/dirt.png", *URL),
+                        },
                         "alt_text": "The thing you'd like to craft",
                     }
                 })],
@@ -2018,47 +2423,79 @@ async fn action_endpoint(
         "crafting" => {
             info!("crafting confirmation window");
 
-            let (tile_id, recipes): (
-                uuid::Uuid,
-                Vec<(bool, config::Recipe<config::ArchetypeHandle>)>,
-            ) = serde_json::from_str(&action.value).unwrap();
-            let tile = hacksteader::get_tile(&dyn_db(), tile_id)
-                .await
-                .map_err(|e| {
-                    let a = format!("couldn't get tile to craft: {}", e);
-                    error!("{}", a);
-                    a
-                })?;
+            let (plant_id, steader): (uuid::Uuid, String) = serde_json::from_str(&action.value).unwrap();
+            let hs = Hacksteader::from_db(&dyn_db(), i.user.id.to_string()).await?;
+            let plant = hs
+                .land
+                .iter()
+                .find_map(|tile| tile.plant.as_ref().filter(|_p| tile.id == plant_id))
+                .ok_or_else(|| format!("no such plant!"))?;
+            let all_nb = hs.neighbor_bonuses();
+            let neighbor_bonuses = all_nb
+                .bonuses_for_plant(
+                    plant_id,
+                    plant.archetype_handle
+                );
+
+            let recipes = plant.advancements_sum(neighbor_bonuses.iter()).recipes;
+            let unlocked_recipes = recipes.len();
+            let max_recipes = plant.advancements_max_sum(neighbor_bonuses.iter()).recipes;
 
             let blocks = recipes
                 .into_iter()
-                .flat_map(|(possible, raw_recipe)| {
+                .enumerate()
+                .flat_map(|(recipe_handle, raw_recipe)| {
+                    use hcor::config::Archetype;
+
+                    let possible = raw_recipe.satisfies(&hs.inventory);
                     let recipe = raw_recipe
                         .clone()
                         .lookup_handles()
                         .expect("invalid archetype handle");
                     let mut b = Vec::with_capacity(recipe.needs.len() + 2);
-                    let possible_output = recipe.makes.any();
+                    let output: Vec<(&'static Archetype, usize)> = recipe.makes.all();
+                    let craft_output_count: usize = output.iter().map(|(_, n)| n).sum();
 
                     let mut head = json!({
                         "type": "section",
-                        "text": mrkdwn(format!(
-                            "{} *{}*\n_{}_",
-                            emojify(&possible_output.name),
-                            possible_output.name,
-                            possible_output.description
-                        )),
+                        "text": mrkdwn(if craft_output_count == 1 {
+                                let (hi, lo) = recipe.xp;
+                                format!(
+                                    "*{}* + around {}xp\n_{}_",
+                                    recipe.title(),
+                                    (hi + lo) / 2,
+                                    recipe.explanation()
+                                )
+                            } else {
+                                output
+                                    .iter()
+                                    .map(|(a, n)| format!(
+                                        "*{}* {} _{}_",
+                                        n,
+                                        emojify(&a.name),
+                                        a.name,
+                                    ))
+                                    .collect::<Vec<String>>()
+                                    .join(match recipe.makes {
+                                        config::RecipeMakes::OneOf(_) => " *or*\n",
+                                        _ => " *and*\n",
+                                    })
+                            }
+                        ),
                     });
-                    if possible && tile.steader == i.user.id {
+                    if possible && steader == i.user.id {
                         head.as_object_mut().unwrap().insert(
                             "accessory".to_string(),
                             json!({
                                 "type": "button",
                                 "style": "primary",
-                                "text": plain_text(format!("Craft {}", possible_output.name)),
+                                "text": plain_text(match craft_output_count {
+                                    1 => format!("Craft {}", recipe.title()),
+                                    _ => "Craft".to_string()
+                                }),
                                 "value": serde_json::to_string(&(
-                                    &tile_id,
-                                    raw_recipe,
+                                    &plant_id,
+                                    recipe_handle,
                                 )).unwrap(),
                                 "action_id": "crafting_confirm",
                             }),
@@ -2066,6 +2503,7 @@ async fn action_endpoint(
                     }
                     b.push(head);
 
+                    b.push(comment("*needs:* ".to_string()));
                     for (count, resource) in recipe.needs {
                         b.push(comment(format!(
                             "*{}* {} _{}_",
@@ -2078,6 +2516,12 @@ async fn action_endpoint(
 
                     b
                 })
+                .chain(
+                    max_recipes
+                        .into_iter()
+                        .skip(unlocked_recipes)
+                        .map(|r| comment(format!("*Level up to unlock:* {}", r.lookup_handles().unwrap().title())))
+                )
                 .collect();
 
             Modal {
@@ -2153,40 +2597,40 @@ async fn action_endpoint(
                 );
 
             let advancements = plant
-                .advancements
-                .unlocked(plant.xp)
+                .unlocked_advancements(neighbor_bonuses.iter())
                 .filter(|a| match &a.kind {
                     Neighbor(..) => false,
                     _ => true,
                 })
                 .chain(neighbor_bonuses.iter())
                 .collect::<Vec<_>>();
-            let sum = plant
-                .advancements
-                .sum(plant.xp, neighbor_bonuses.iter());
-            let yield_farm_cycles = plant.base_yield_duration / sum.yield_speed_multiplier;
+            let sum = plant.advancements_sum(neighbor_bonuses.iter());
+            let yield_farm_cycles = plant.base_yield_duration.map(|x| x / sum.yield_speed_multiplier);
 
             let mut blocks = vec![];
 
-            blocks.push(json!({
-                "type": "section",
-                "text": mrkdwn(format!(
-                    concat!(
-                        "*Yield Speed*\n",
-                        "Yields every: *{:.2} minutes*\n",
-                        "Total Speedboost: *x{:.3}*",
-                    ),
-                    yield_farm_cycles / FARM_CYCLES_PER_MIN as f32,
-                    sum.yield_speed_multiplier
-                )),
-            }));
+            if let Some(yield_farm_cycles) = yield_farm_cycles {
+                blocks.push(json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        concat!(
+                            "*Yield Speed*\n",
+                            "Yields every: *{:.2} minutes*\n",
+                            "Total Speedboost: *x{:.3}*",
+                        ),
+                        yield_farm_cycles / FARM_CYCLES_PER_MIN as f32,
+                        sum.yield_speed_multiplier
+                    )),
+                }));
+            }
+
             for adv in advancements.iter() {
                 match &adv.kind {
-                    YieldSpeed(s) => {
+                    YieldSpeedMultiplier(s) => {
                         blocks.push(comment(format!("_{}_: *x{}* speed boost", adv.title, s)));
                     }
                     Neighbor(s) => match **s {
-                        YieldSpeed(s) => {
+                        YieldSpeedMultiplier(s) => {
                             blocks.push(comment(format!(
                                 "_{}_: *x{}* speed boost _(from neighbor)_",
                                 adv.title, s
@@ -2207,11 +2651,11 @@ async fn action_endpoint(
             }));
             for adv in advancements.iter() {
                 match &adv.kind {
-                    YieldSize(x) => {
+                    YieldSizeMultiplier(x) => {
                         blocks.push(comment(format!("_{}_: *x{}* size boost", adv.title, x)));
                     }
                     Neighbor(s) => match **s {
-                        YieldSize(s) => {
+                        YieldSizeMultiplier(s) => {
                             blocks.push(comment(format!(
                                 "_{}_: *x{}* size boost _(from neighbor)_",
                                 adv.title, s
@@ -2264,31 +2708,46 @@ async fn action_endpoint(
             .await?
         }
         "item_apply" => {
-            use config::ApplicationEffect::*;
-            use futures::stream::{self, StreamExt, TryStreamExt};
+            use possess::Keepsake;
 
-            let (tile_id, applicable_ids): (uuid::Uuid, Vec<uuid::Uuid>) =
-                serde_json::from_str(&action.value).unwrap();
-            let db = dyn_db();
-
-            let applicables = stream::iter(applicable_ids)
-                .map(|id| hacksteader::get_possession(&db, Key::misc(id)))
-                .buffer_unordered(50)
-                .try_collect::<Vec<Possession>>()
-                .await
-                .map_err(|e| {
-                    let a = format!("couldn't get applicable: {}", e);
-                    error!("{}", a);
-                    a
-                })?
-                .into_iter()
-                .map(|x| x.try_into())
-                .collect::<Result<Vec<Possessed<possess::Keepsake>>, _>>()
-                .map_err(|e| {
-                    let a = format!("couldn't transform fetched applicable: {}", e);
+            let (tile_id, user_id): (uuid::Uuid, String) =
+                serde_json::from_str(&action.value).map_err(|e| {
+                    let a = format!("couldn't parse action value: {}", e);
                     error!("{}", a);
                     a
                 })?;
+            let db = dyn_db();
+
+            let Hacksteader { inventory, land,  .. } = Hacksteader::from_db(&db, user_id)
+                .await
+                .map_err(|e| { error!("{}", e); e })?;
+            let plant = land
+                .into_iter()
+                .find(|t| t.id == tile_id)
+                .and_then(|t| t.plant)
+                .ok_or_else(|| {
+                    let e = "Couldn't find such a plant at this user's hackstead".to_string();
+                    error!("{}", e);
+                    e
+                })?;
+            let applicables: Vec<Possessed<Keepsake>> = inventory
+                .into_iter()
+                .filter_map(|x| x.try_into().ok())
+                .filter(|x: &Possessed<Keepsake>| {
+                    x
+                        .inner
+                        .item_application
+                        .as_ref()
+                        .map(|item_appl| {
+                            item_appl
+                                .effects
+                                .iter()
+                                .any(|e| e.keep_plants.allows(&plant.name))
+                        })
+                        .unwrap_or(false)
+                })
+                .take(40)
+                .collect();
 
             Modal {
                 method: "open".to_string(),
@@ -2310,18 +2769,11 @@ async fn action_endpoint(
                             .filter_map(|i| {
                                 Some(json!({
                                     "text": plain_text(format!("{} {}", emojify(&i.name), i.name)),
-                                    "description": plain_text(match i.inner.item_application_effect.as_ref()? {
-                                        TimeIncrease { extra_cycles, duration_cycles } => format!(
-                                            "~{} hours pass in {} minutes",
-                                            extra_cycles / FARM_CYCLES_PER_MIN / 60,
-                                            duration_cycles / FARM_CYCLES_PER_MIN,
-                                        )
-                                    }),
+                                    "description": plain_text(&i.inner.item_application.as_ref()?.short_description),
                                     // this is fucky-wucky because value can only be 75 chars
                                     "value": serde_json::to_string(&(
                                         &tile_id.to_simple().to_string(),
                                         i.id.to_simple().to_string(),
-                                        i.archetype_handle
                                     )).unwrap(),
                                 }))
                             })
@@ -2332,6 +2784,18 @@ async fn action_endpoint(
             }
             .launch()
             .await?
+        }
+        "gotchi_hatch" => {
+            info!("hatching egg!");
+
+            to_farming
+                .send(FarmingInputEvent::HatchEgg(
+                    serde_json::from_str(&dbg!(action.value)).unwrap(),
+                    i.user.id.clone()
+                ))
+                .unwrap();
+
+            json!({})
         }
         "gotchi_nickname" => {
             Modal {
@@ -2377,16 +2841,6 @@ async fn action_endpoint(
 
             page.modal(i.trigger_id, "push").await?.launch().await?
         }
-        "push_possession_page" => {
-            let page_json = action.value;
-            let mut page: PossessionPage = serde_json::from_str(&page_json).unwrap();
-
-            if page.possession.steader == i.user.id {
-                page.credentials = Credentials::Owner;
-            }
-
-            page.modal(i.trigger_id, "push").launch().await?
-        }
         "possession_page" => {
             let page_json = action.value;
             let mut page: PossessionPage = serde_json::from_str(&page_json).unwrap();
@@ -2397,11 +2851,27 @@ async fn action_endpoint(
 
             page.modal(i.trigger_id, "open").launch().await?
         }
+        "push_possession_page" => {
+            let page_json = action.value;
+            let mut page: PossessionPage = serde_json::from_str(&page_json).unwrap();
+
+            if page.possession.steader == i.user.id {
+                page.credentials = Credentials::Owner;
+            }
+
+            page.modal(i.trigger_id, "push").launch().await?
+        }
         "possession_overview_page" => {
             let page_json = action.value;
             let page: PossessionOverviewPage = serde_json::from_str(&page_json).unwrap();
 
             page.modal(i.trigger_id, "open").await?.launch().await?
+        }
+        "push_possession_overview_page" => {
+            let page_json = action.value;
+            let page: PossessionOverviewPage = serde_json::from_str(&page_json).unwrap();
+
+            page.modal(i.trigger_id, "push").await?.launch().await?
         }
         _ => mrkdwn("huh?"),
     };
@@ -2411,7 +2881,7 @@ async fn action_endpoint(
 
 #[rocket::get("/steadercount")]
 async fn steadercount() -> Result<String, String> {
-    core::Profile::fetch_all(&dyn_db())
+    hcor::Profile::fetch_all(&dyn_db())
         .await
         .map(|profiles| profiles.len().to_string())
 }
@@ -2419,12 +2889,84 @@ async fn steadercount() -> Result<String, String> {
 pub enum FarmingInputEvent {
     ActivateUser(String),
     RedeemLandCert(uuid::Uuid, String),
-    ApplyItem(uuid::Uuid, config::ArchetypeHandle),
+    HatchEgg(uuid::Uuid, String),
+    ApplyItem(ItemApplication, String),
     PlantSeed(uuid::Uuid, hacksteader::Plant),
     BeginCraft {
         tile_id: uuid::Uuid,
-        recipe: config::Recipe<config::ArchetypeHandle>,
+        recipe_archetype_handle: usize,
     },
+}
+
+pub fn format_yield(items: Vec<Possession>, user: String) -> Vec<Value> {
+    if items.len() < 8 {
+        items
+            .iter()
+            .map(|p| json!({
+                "type": "section",
+                "text": mrkdwn(format!(
+                    "*<@{}>'s new* {} _{}_!",
+                    user,
+                    emojify(&p.name),
+                    p.name,
+                )),
+                "accessory": {
+                    "type": "image",
+                    "image_url": format!(
+                        "http://{}/gotchi/img/{}/{}.png",
+                        *URL,
+                        format!(
+                            "{:?}",
+                            p.kind.category()
+                        ).to_lowercase(),
+                        filify(&p.name)
+                    ),
+                    "alt_text": "happy shiny give u stuffs",
+                }
+            }))
+            .collect::<Vec<_>>()
+    } else {
+        let mut occurrences: HashMap<_, usize> = Default::default();
+
+        for p in &items {
+            *occurrences
+                .entry((
+                    p.name.clone(),
+                    format!("{:?}", p.kind.category())
+                        .to_lowercase()
+                ))
+                .or_insert(0) += 1;
+        }
+
+        occurrences
+            .iter()
+            .map(|((name, category), count)| json!({
+                "type": "section",
+                "text": mrkdwn(format!(
+                    "_<@{}>'s_ *{}* new {} _{}_!",
+                    user,
+                    count,
+                    emojify(&name),
+                    name
+                )),
+                "accessory": {
+                    "type": "image",
+                    "image_url": format!(
+                        "http://{}/gotchi/img/{}/{}.png",
+                        *URL,
+                        category,
+                        filify(&name)
+                    ),
+                    "alt_text": "happy shiny egg give u stuffs",
+                }
+            }))
+            .collect::<Vec<_>>()
+    }
+}
+
+pub struct ItemApplication {
+    tile: uuid::Uuid,
+    item: uuid::Uuid,
 }
 
 #[tokio::main]
@@ -2439,34 +2981,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let (tx, rx) = crossbeam_channel::unbounded();
 
     tokio::task::spawn({
-        use std::collections::HashMap;
         use std::time::{Duration, SystemTime};
         use tokio::time::interval;
-
-        struct ItemEffect {
-            // the number of farming cycles this effect lasts for
-            duration_cycles_total: u64,
-
-            // the number of extra cycles this effect applies to its plant
-            // (right now all items can do is give their plants extra cycles)
-            extra_cycles_total: u64,
-            // the number of cycles still to be awarded to the plant
-            extra_cycles_remaining: u64,
-        }
 
         let mut interval = interval(Duration::from_millis(FARM_CYCLE_MILLIS));
 
         let mut active_users: HashMap<String, bool> = HashMap::new();
-        let mut item_effects: HashMap<uuid::Uuid, ItemEffect> = HashMap::new();
         let mut plant_queue: HashMap<uuid::Uuid, hacksteader::Plant> = HashMap::new();
-        let mut craft_queue: HashMap<uuid::Uuid, config::Recipe<_>> = HashMap::new();
+        // fix like this
+        let mut craft_queue: HashMap<uuid::Uuid, config::ArchetypeHandle> = HashMap::new();
+        let mut item_application_queue: HashMap<String, ItemApplication> = HashMap::new();
         let mut land_cert_queue: HashMap<String, uuid::Uuid> = HashMap::new();
+        let mut hatch_egg_queue: HashMap<String, uuid::Uuid> = HashMap::new();
 
         async move {
-            use core::Profile;
+            use hcor::Profile;
             use futures::stream::{self, StreamExt, TryStreamExt};
             use hacksteader::{Plant, Tile};
-            use std::collections::HashMap;
 
             loop {
                 for (_, fresh) in active_users.iter_mut() {
@@ -2480,29 +3011,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                             info!("activated: {}", name);
                             active_users.insert(name, true);
                         }
-                        ApplyItem(tile_id, item_ah) => {
-                            let config::ApplicationEffect::TimeIncrease {
-                                extra_cycles,
-                                duration_cycles,
-                            } = CONFIG
-                                .possession_archetypes
-                                .get(item_ah)
-                                .expect("invalid archetype handle")
-                                .kind
-                                .keepsake()
-                                .expect("can only apply keepsakes")
-                                .item_application_effect
-                                .clone()
-                                .expect("keepsake has no application effect");
-
-                            item_effects.insert(
-                                tile_id,
-                                ItemEffect {
-                                    duration_cycles_total: duration_cycles,
-                                    extra_cycles_total: extra_cycles,
-                                    extra_cycles_remaining: extra_cycles,
-                                },
-                            );
+                        ApplyItem(application, user_id) => {
+                            item_application_queue.insert(user_id, application);
                         }
                         PlantSeed(tile_id, plant) => {
                             plant_queue.insert(tile_id, plant);
@@ -2510,88 +3020,259 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         RedeemLandCert(cert_id, user_id) => {
                             land_cert_queue.insert(user_id, cert_id);
                         }
-                        BeginCraft { tile_id, recipe } => {
-                            craft_queue.insert(tile_id, recipe);
+                        HatchEgg(egg_id, user_id) => {
+                            hatch_egg_queue.insert(user_id, egg_id);
+                        }
+                        BeginCraft { tile_id, recipe_archetype_handle } => {
+                            craft_queue.insert(tile_id, recipe_archetype_handle);
                         }
                     }
                 }
 
                 interval.tick().await;
+                info!("update!");
 
                 if active_users.is_empty() {
+                    info!("nobody on.");
                     continue;
                 }
 
                 let db = dyn_db();
 
+                use rand::Rng;
                 let mut deletions = vec![];
                 let mut clear_plants = vec![];
                 let mut possessions = vec![];
                 let mut new_tiles = vec![];
-                let mut dms: Vec<(String, [Value; 2])> = Vec::new();
+                let mut dms: Vec<(String, Vec<Value>)> = Vec::new();
+                let mut market_logs: Vec<Vec<Value>> = Vec::new();
 
-                let mut hacksteaders: Vec<Hacksteader> = match stream::iter(active_users.clone())
+                let mut hacksteaders: Vec<Hacksteader> = stream::iter(active_users.clone())
                     .map(|(id, _)| Hacksteader::from_db(&db, id))
                     .buffer_unordered(50)
-                    .try_collect::<Vec<_>>()
+                    .collect::<Vec<_>>()
                     .await
-                {
-                    Ok(i) => i,
-                    Err(e) => {
-                        error!("error reading hacksteader from db: {}", e);
-                        continue;
-                    }
-                };
+                    .into_iter()
+                    .filter_map(|hs| match hs {
+                        Ok(i) => Some(i),
+                        Err(e) => {
+                            error!("error reading hacksteader from db: {}", e);
+                            None
+                        }
+                    })
+                    .collect();
 
-                // Give away requested land
+                // Give away requested land/hatch eggs
                 for hs in hacksteaders.iter_mut() {
+                    if let Some((plant, appl, item)) = item_application_queue
+                        .remove(&hs.user_id)
+                        .and_then(|appl| {
+                            let i = hs.inventory.iter().find(|i| i.id == appl.item)?;
+
+                            Some((
+                                hs.land.iter_mut().find(|t| t.id == appl.tile)?.plant.as_mut()?,
+                                i.kind.keepsake()?.item_application.as_ref()?,
+                                i,
+                            ))
+                        })
+                    {
+                        deletions.push(Key::misc(item.id));
+                        for (i, e) in appl.effects.iter().enumerate() {
+                            match &e.kind {
+                                config::ItemApplicationEffectKind::TurnsPlantInto(name) => {
+                                    plant.archetype_handle = CONFIG
+                                        .find_plant_handle(name)
+                                        .expect("invalid handle");
+
+                                    for (i, e) in plant
+                                        .effects
+                                        .clone()
+                                        .iter()
+                                        .filter_map(|e| CONFIG.get_item_application_effect(
+                                            e.item_archetype_handle,
+                                            e.effect_archetype_handle
+                                        ))
+                                        .enumerate()
+                                    {
+                                        if !e.keep_plants.lookup_handles().unwrap().allows(&plant.archetype_handle) {
+                                            plant.effects.swap_remove(i);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+
+                            plant.effects.push(
+                                hacksteader::Effect {
+                                    until_finish: e.duration,
+                                    item_archetype_handle: item.archetype_handle,
+                                    effect_archetype_handle: i,
+                                }
+                            );
+                        }
+                    }
                     if let Some(cert_id) = land_cert_queue.remove(&hs.user_id) {
-                        deletions.push(Key::misc(cert_id));
-                        let new_tile = hacksteader::Tile::new(hs.user_id.clone());
-                        hs.land.push(new_tile.clone());
-                        new_tiles.push(new_tile.clone());
+                        if hs.inventory.iter().any(|p| {
+                            let same_id = p.id == cert_id;
+                            let actually_land_cert = p
+                                .kind
+                                .keepsake()
+                                .filter(|k| k.unlocks_land.is_some())
+                                .is_some();
+
+                            same_id && actually_land_cert
+                        }) {
+                            deletions.push(Key::misc(cert_id));
+                            let new_tile = hacksteader::Tile::new(hs.user_id.clone());
+                            hs.land.push(new_tile.clone());
+                            new_tiles.push(new_tile.clone());
+                        }
+                    }
+                    if let Some(egg_id) = hatch_egg_queue.remove(&hs.user_id) {
+                        info!("egg hatch requested!");
+
+                        if let Some((p, hatch_table)) = hs.gotchis.iter().find_map(|g| {
+                            Some(g)
+                                .filter(|g| g.id == egg_id)
+                                .and_then(|g| {
+                                    info!("hatching {:?}", g);
+                                    Some((g, g.inner.hatch_table.as_ref()?))
+                                })
+                        }) {
+                            deletions.push(Key::gotchi(egg_id));
+
+                            let (spawn_handles, percentile) = config::spawn_with_percentile(
+                                    hatch_table,
+                                    &mut rand::thread_rng()
+                                );
+
+                            let spawned: Vec<Possession> = spawn_handles
+                                .into_iter()
+                                .map(|h| Possession::new(
+                                    CONFIG.find_possession_handle(&h).unwrap(),
+                                    possess::Owner::hatcher(hs.user_id.clone())
+                                ))
+                                .collect();
+
+                            let mut msg = vec![
+                                json!({
+                                    "type": "section",
+                                    "text": mrkdwn(format!(
+                                        concat!(
+                                            "*<@{}> hatched a {}!*\n",
+                                            "The rarity of this loot puts it in the ",
+                                            "*{:.2}th* percentile for loot from eggs of this type.",
+                                        ),
+                                        hs.user_id,
+                                        p.name,
+                                        percentile * 100.0
+                                    )),
+                                    "accessory": {
+                                        "type": "image",
+                                        "image_url": format!(
+                                            "http://{}/gotchi/img/{}/{}.png",
+                                            *URL,
+                                            format!(
+                                                "{:?}",
+                                                p.kind.category()
+                                            ).to_lowercase(),
+                                            filify(&p.name)
+                                        ),
+                                        "alt_text": "happy shiny egg give u stuffs",
+                                    }
+                                }),
+                                comment("WAT I TAUGHT ET WAZ ROCC!?!?!!"),
+                                json!({ "type": "divider" })
+                            ];
+
+                            possessions.extend_from_slice(&spawned);
+
+                            msg.append(&mut format_yield(spawned, hs.user_id.clone()));
+                            dms.push((hs.user_id.clone(), msg.clone()));
+                            market_logs.push(msg);
+                        } else {
+                            warn!("egg hatch ignored; hack attempt?")
+                        }
                     }
                 }
 
                 // Launch requested crafts
-                for Hacksteader {
-                    land, inventory, ..
-                } in hacksteaders.iter_mut()
-                {
-                    for tile in land.iter_mut() {
-                        let plant = match &mut tile.plant {
-                            Some(pl) => pl,
-                            None => continue,
-                        };
+                for hs in hacksteaders.iter_mut() {
+                    let nb = hs.neighbor_bonuses();
+                    let Hacksteader {
+                        inventory,
+                        land,
+                        ..
+                    } = hs;
 
-                        if let Some(recipe) = craft_queue.remove(&tile.id) {
+                    let mut land_iter = land.iter_mut();
+                    while let Some(Tile { plant: Some(ref mut plant), steader, id, .. }) = land_iter.next() {
+
+                        let config::PlantAdvancementSum { recipes, craft_return_chance, .. } = plant
+                            .advancements_sum(
+                                nb
+                                    .clone()
+                                    .bonuses_for_plant(
+                                        *id,
+                                        plant.archetype_handle,
+                                    )
+                                    .iter(),
+                            );
+
+                        if let Some((recipe_archetype_handle, recipe)) = craft_queue
+                            .remove(&id)
+                            .filter(|_| plant.craft.is_none())
+                            .and_then(|i| Some((i, recipes.get(i)?)))
+                        {
                             let should_take: usize =
                                 recipe.needs.iter().map(|(n, _)| n).sum::<usize>();
-                            let mut used_resources = recipe
+                            let used_resources = recipe
                                 .needs
+                                .clone()
                                 .into_iter()
                                 .flat_map(|(count, ah)| {
                                     inventory
                                         .iter()
                                         .filter(move |p| p.archetype_handle == ah)
-                                        .map(|p| p.key())
                                         .take(count)
                                 })
                                 .collect::<Vec<_>>();
 
                             if should_take == used_resources.len() {
-                                deletions.append(&mut used_resources);
+                                let mut rng = rand::thread_rng();
+                                deletions.append(
+                                    &mut used_resources
+                                        .into_iter()
+                                        .filter(|p| {
+                                            let keep = rng.gen_range(0.0, 1.0) < craft_return_chance;
+                                            if keep {
+                                                info!("mommy can we keep it? YES? YESSS");
+                                                dms.push((
+                                                    steader.clone(),
+                                                    vec![
+                                                        comment("your craft return bonus just came in quite handy!"),
+                                                        comment(format!(
+                                                            "looks like you get to keep a {} from that craft!",
+                                                            &p.name,
+                                                        )),
+                                                    ],
+                                                ));
+                                            }
+                                            !keep
+                                        })
+                                        .map(|p| p.key())
+                                        .collect()
+                                );
 
+                                info!("submitting craft");
                                 plant.craft = Some(hacksteader::Craft {
                                     until_finish: recipe.time,
-                                    total_cycles: recipe.time,
-                                    makes: recipe.makes.any(),
-                                    destroys_plant: recipe.destroys_plant,
+                                    recipe_archetype_handle,
                                 });
                             } else {
                                 dms.push((
-                                    tile.steader.clone(),
-                                    [
+                                    steader.clone(),
+                                    vec![
                                         comment("you don't have enough resources to craft that"),
                                         comment("nice try tho"),
                                     ],
@@ -2648,7 +3329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     })
                     .collect();
 
-                // remove unactive users
+                // remove inactive users
                 for ((_, profile), (user, fresh)) in
                     profiles.iter_mut().zip(active_users.clone().into_iter())
                 {
@@ -2671,8 +3352,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 // game tick loop:
                 // this is where we go through and we increment each xp/craft/yield
                 for (plant, tile) in tiles.iter_mut() {
-                    let mut rng = rand::thread_rng();
-
                     let profile = match profiles.get_mut(&tile.steader) {
                         Some(profile) => profile,
                         None => {
@@ -2704,252 +3383,238 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .clone()
                         .bonuses_for_plant(tile.id, plant.archetype_handle);
 
-                    // elapsed for this plant is the base amount of time plus some extras
-                    // in case something is speeding up time for this plant
-                    let boosted_elapsed = {
-                        let elapsed = SystemTime::now()
-                            .duration_since(profile.last_farm)
-                            .unwrap_or_default()
-                            .as_millis()
-                            / (FARM_CYCLE_MILLIS as u128);
+                    // amount of farm cycles since the last farm, rounded down
+                    let elapsed = SystemTime::now()
+                        .duration_since(profile.last_farm)
+                        .unwrap_or_default()
+                        .as_millis()
+                        / (FARM_CYCLE_MILLIS as u128);
 
-                        // we don't want to add the boosted_elapsed here, then your item effects
-                        // would have to be "paid for" later (your farm wouldn't work for however
-                        // much time the effect gave you).
-                        if elapsed > 0 {
-                            if let Some(tokens) = plant_tokens.get_mut(&profile.id) {
-                                *tokens = *tokens - 1;
-                                if *tokens == 0 {
-                                    info!("all plants finished for {}", profile.id);
-
-                                    profile.last_farm += Duration::from_millis(
-                                        (FARM_CYCLE_MILLIS as u128 * elapsed)
-                                            .try_into()
-                                            .unwrap_or_else(|e| {
-                                                error!(
-                                                    "too many farm cycle millis * elapsed[{}]: {}",
-                                                    elapsed, e
-                                                );
-                                                0
-                                            }),
-                                    );
-                                }
+                    // increment their profile's "last farm" time so we can calculate
+                    // an accurate "elapsed" during the next update.
+                    if elapsed > 0 {
+                        if let Some(tokens) = plant_tokens.get_mut(&profile.id) {
+                            *tokens = *tokens - 1;
+                            if *tokens == 0 {
+                                info!("all plants finished for {}", profile.id);
+                                
+                                // we don't want to add the boosted_elapsed here, then your item effects
+                                // would have to be "paid for" later (your farm wouldn't work for however
+                                // much time the effect gave you).
+                                profile.last_farm += Duration::from_millis(
+                                    (FARM_CYCLE_MILLIS as u128 * elapsed)
+                                        .try_into()
+                                        .unwrap_or_else(|e| {
+                                            error!(
+                                                "too many farm cycle millis * elapsed[{}]: {}",
+                                                elapsed, e
+                                            );
+                                            0
+                                        }),
+                                );
                             }
                         }
-
-                        if let Some(effect) = item_effects.get(&tile.id).clone() {
-                            // decrement counter, remove if 0
-                            if effect.extra_cycles_remaining == 0 {
-                                info!("removing +{} cyles effect", effect.extra_cycles_total);
-                                item_effects.remove(&tile.id);
-                                elapsed
-                            } else {
-                                // calculate award, handle edge case that there's a bit left
-                                let base_award =
-                                    effect.extra_cycles_total / effect.duration_cycles_total;
-                                let to_award = if effect.extra_cycles_remaining < base_award {
-                                    effect.extra_cycles_remaining
-                                } else {
-                                    base_award
-                                };
-
-                                let i = item_effects.get_mut(&tile.id).unwrap();
-                                i.extra_cycles_remaining -= to_award;
-
-                                elapsed + to_award as u128
-                            }
-                        } else {
-                            elapsed
-                        }
-                    };
+                    }
 
                     info!(
-                        "triggering {} farming cycles for {}",
-                        boosted_elapsed, profile.id
+                        "elapsing {} cycles for {}",
+                        elapsed, profile.id
                     );
-                    for _ in 0..boosted_elapsed {
-                        let plant_sum = plant
-                            .advancements
-                            .sum(plant.xp, neighbor_bonuses.iter());
 
-                        plant.craft = match plant.craft.take() {
-                            Some(mut craft) => {
-                                if craft.until_finish > plant_sum.yield_speed_multiplier {
-                                    craft.until_finish -= plant_sum.yield_speed_multiplier;
-                                    Some(craft)
-                                } else {
-                                    let p = Possession::new(
-                                        craft.makes,
-                                        possess::Owner::crafter(tile.steader.clone()),
-                                    );
-                                    if craft.destroys_plant {
-                                        clear_plants.push(tile.id.clone());
+                    for _ in 0..elapsed {
+
+                        plant.effects = plant
+                            .effects
+                            .iter_mut()
+                            .filter_map(|e| {
+                                if let Some(uf) = e.until_finish.as_mut() {
+                                    // decrement counter, remove if 0
+                                    *uf = (*uf - 1.0).max(0.0);
+                                    if *uf == 0.0 {
+                                        info!("removing effect: {:?}", e);
+                                        return None;
                                     }
-                                    possessions.push(p.clone());
-                                    dms.push((
-                                        tile.steader.clone(),
-                                        [
+                                }
+
+                                Some(*e)
+                            })
+                            .collect::<Vec<_>>();
+
+                        // you want to recalculate this every update because it's dependent
+                        // on what effects are active, especially the `total_extra_time_ticks`.
+                        let plant_sum = plant.advancements_sum(neighbor_bonuses.iter());
+
+                        let ticks = plant_sum.total_extra_time_ticks + 1;
+                        let mut rng = rand::thread_rng();
+                        info!("triggering {} ticks for {}'s cycle", ticks, profile.id);
+                        for _ in 0..ticks {
+                            plant.craft = match plant.current_recipe_raw().and_then(|r| Some((r, plant.craft.take()?))) {
+                                Some((recipe, mut craft)) => {
+                                    if craft.until_finish > plant_sum.crafting_speed_multiplier {
+                                        craft.until_finish -= plant_sum.crafting_speed_multiplier;
+                                        Some(craft)
+                                    } else {
+                                        let earned_xp = {
+                                            let (lo, hi) = recipe.xp;
+                                            rng.gen_range(lo, hi)
+                                        };
+                                        plant.queued_xp_bonus += earned_xp;
+
+                                        let mut output: Vec<Possession> = recipe
+                                            .makes
+                                            .clone()
+                                            .output()
+                                            .into_iter()
+                                            .map(|ah| Possession::new(
+                                                ah,
+                                                possess::Owner::crafter(tile.steader.clone()),
+                                            ))
+                                            .collect();
+
+                                        if rng.gen_range(0.0, 1.0) < plant_sum.double_craft_yield_chance {
+                                            info!("cloning recipe output! {:?}", output);
+                                            output.append(&mut output.clone());
+                                            info!("after clone: {:?}", output);
+                                        }
+                                        
+                                        possessions.extend_from_slice(&output);
+
+                                        let mut msg = vec![
                                             json!({
                                                 "type": "section",
                                                 "text": mrkdwn(format!(
-                                                    "Your *{}* has finished crafting a {} *{}* for you!",
+                                                    concat!(
+                                                        "Your *{}* has finished crafting *{}* for you!\n",
+                                                        "This earned it {} xp!",
+                                                    ),
                                                     plant.name,
-                                                    emojify(&p.name),
-                                                    p.name
+                                                    recipe.clone().lookup_handles().unwrap().title(),
+                                                    earned_xp,
                                                 )),
                                                 "accessory": {
                                                     "type": "image",
                                                     "image_url": format!(
-                                                        "http://{}/gotchi/img/{}/{}.png",
+                                                        "http://{}/gotchi/img/plant/{}.gif",
                                                         *URL,
-                                                        format!(
-                                                            "{:?}",
-                                                            p.kind.category()
-                                                        ).to_lowercase(),
-                                                        filify(&p.name)
+                                                        filify(&plant.current_advancement().art)
                                                     ),
-                                                    "alt_text": "Hackpheus holding a Gift!",
+                                                    "alt_text": "happy shiny plant give u stuffs",
                                                 }
                                             }),
-                                            comment("YAY FREE STUFFZ 'CEPT LIKE IT'S NOT FREE")
-                                        ]
-                                    ));
-                                    None
-                                }
-                            }
-                            None => None,
-                        };
+                                            comment("YAY FREE STUFFZ 'CEPT LIKE IT'S NOT FREE"),
+                                            json!({ "type": "divider" }),
+                                        ];
 
-                        plant.until_yield = match plant.until_yield
-                            - plant_sum.yield_speed_multiplier
-                        {
-                            n if n > 0.0 => n,
-                            _ => {
-                                let mut produced: Vec<Possession> = plant_sum
-                                    .yields
-                                    .iter()
-                                    .flat_map({
-                                        let owner = &tile.steader;
-                                        let pedigree = &plant.pedigree;
-                                        move |(spawn_rate, ah)| {
-                                            (0..spawn_rate.gen_count(&mut rng)).map(move |_| {
-                                                let mut p = Possession::new(
-                                                    *ah,
-                                                    possess::Owner::farmer(owner.clone()),
-                                                );
-                                                if let Some(s) = p.kind.seed_mut() {
-                                                    s.pedigree = pedigree.clone();
+                                        msg.append(&mut format_yield(output, tile.steader.clone()));
+                                        dms.push((tile.steader.clone(), msg));
 
-                                                    if let Some(sg) = s
-                                                        .pedigree
-                                                        .last_mut()
-                                                        .filter(|sg| sg.id == *owner)
-                                                    {
-                                                        sg.generations += 1;
-                                                    } else {
-                                                        s.pedigree.push(
-                                                            possess::seed::SeedGrower::new(
-                                                                owner.clone(),
-                                                                1,
-                                                            ),
-                                                        )
-                                                    }
-                                                }
-                                                p
-                                            })
+                                        if recipe.destroys_plant {
+                                            clear_plants.push(tile.id.clone());
                                         }
-                                    })
-                                    .collect();
 
-                                dms.push((tile.steader.clone(), [
+                                        None
+                                    }
+                                }
+                                None => None,
+                            };
+
+                            plant.until_yield = match plant.until_yield
+                                - plant_sum.yield_speed_multiplier
+                            {
+                                n if n > 0.0 => n,
+                                _ if plant.base_yield_duration.is_some() => {
+                                    let owner = &tile.steader;
+                                    let yielded = config::spawn(&plant_sum.yields, &mut rand::thread_rng())
+                                        .map(|ah| Possession::new(ah, possess::Owner::farmer(owner.clone())))
+                                        .collect::<Vec<Possession>>();
+
+                                    let mut msg = vec![
+                                        json!({
+                                            "type": "section",
+                                            "text": mrkdwn(format!(
+                                                "Your *{}* has produced a crop yield for you!",
+                                                plant.name,
+                                            )),
+                                            "accessory": {
+                                                "type": "image",
+                                                "image_url": format!(
+                                                    "http://{}/gotchi/img/plant/{}.gif",
+                                                    *URL,
+                                                    filify(&plant.current_advancement().art)
+                                                ),
+                                                "alt_text": "happy shiny plant give u stuffs",
+                                            }
+                                        }),
+                                        comment("FREE STUFF FROM CUTE THING"),
+                                        json!({ "type": "divider" })
+                                    ];
+
+                                    possessions.extend_from_slice(&yielded);
+
+                                    msg.append(&mut format_yield(yielded, tile.steader.clone()));
+
+                                    dms.push((tile.steader.clone(), msg));
+
+                                    plant.base_yield_duration.unwrap_or(0.0)
+                                }
+                                n => n
+                            };
+
+                            if let Some(advancement) = plant.increase_xp(plant_sum.xp_multiplier) {
+                                dms.push((tile.steader.clone(), vec![
                                     json!({
                                         "type": "section",
                                         "text": mrkdwn(format!(
                                             concat!(
-                                                ":tada: Your *{}* has produced the following for you:\n\n{}\n\n",
-                                                ":sparkles: XP Bonus: *{}xp*",
+                                                ":tada: Your _{}_ is now a *{}*!\n\n",
+                                                "*{}* Achieved:\n _{}_\n\n",
+                                                ":stonks: Total XP: *{}xp*",
                                             ),
                                             plant.name,
-                                            produced
-                                                .iter()
-                                                .map(|x| format!("{} _{}_", emojify(&x.name), x.name))
-                                                .collect::<Vec<String>>()
-                                                .join(",\n"),
-                                            100
+                                            advancement.achiever_title,
+                                            advancement.title,
+                                            advancement.description,
+                                            advancement.xp
                                         )),
                                         "accessory": {
                                             "type": "image",
-                                            "image_url": format!(
-                                                "http://{}/gotchi/img/plant/{}.gif",
-                                                *URL,
-                                                filify(&plant.current_advancement().art)
-                                            ),
-                                            "alt_text": "happy shiny plant give u stuffs",
+                                            "image_url": format!("http://{}/gotchi/img/plant/{}.gif", *URL, filify(&advancement.art)),
+                                            "alt_text": "happy shiny better plant",
                                         }
                                     }),
-                                    comment("FREE STUFF FROM CUTE THING"),
-                                ]));
-
-                                possessions.append(&mut produced);
-
-                                plant.base_yield_duration
+                                    comment("EXCITING LEVELING UP NOISES"),
+                                ]))
                             }
-                        };
-
-                        if let Some(advancement) = plant.increment_xp() {
-                            dms.push((tile.steader.clone(), [
-                                json!({
-                                    "type": "section",
-                                    "text": mrkdwn(format!(
-                                        concat!(
-                                            ":tada: Your _{}_ is now a *{}*!\n\n",
-                                            "*{}* Achieved:\n _{}_\n\n",
-                                            ":stonks: Total XP: *{}xp*",
-                                        ),
-                                        plant.name,
-                                        advancement.achiever_title,
-                                        advancement.title,
-                                        advancement.description,
-                                        advancement.xp
-                                    )),
-                                    "accessory": {
-                                        "type": "image",
-                                        "image_url": format!("http://{}/gotchi/img/plant/{}.gif", *URL, filify(&advancement.art)),
-                                        "alt_text": "happy shiny better plant",
-                                    }
-                                }),
-                                comment("EXCITING LEVELING UP NOISES"),
-                            ]))
-                        }
-                        let profile_sum = profile.advancements.sum(profile.xp, std::iter::empty());
-                        if let Some(advancement) = profile.increment_xp() {
-                            dms.push((tile.steader.clone(), [
-                                json!({
-                                    "type": "section",
-                                    "text": mrkdwn(format!(
-                                        concat!(
-                                            ":tada: Your _Hackstead_ is now a *{}*!\n\n",
-                                            "*{}* Achieved:\n_{}_\n\n",
-                                            ":stonks: Total XP: *{}xp*\n",
-                                            ":mountain: Land Available: *{} pieces* _(+{} pieces)_"
-                                        ),
-                                        advancement.achiever_title,
-                                        advancement.title,
-                                        advancement.description,
-                                        advancement.xp,
-                                        profile_sum.land,
-                                        match advancement.kind {
-                                            config::HacksteadAdvancementKind::Land { pieces } => pieces,
+                            let profile_sum = profile.advancements.sum(profile.xp, std::iter::empty());
+                            if let Some(advancement) = profile.increase_xp(plant_sum.xp_multiplier) {
+                                dms.push((tile.steader.clone(), vec![
+                                    json!({
+                                        "type": "section",
+                                        "text": mrkdwn(format!(
+                                            concat!(
+                                                ":tada: Your _Hackstead_ is now a *{}*!\n\n",
+                                                "*{}* Achieved:\n_{}_\n\n",
+                                                ":stonks: Total XP: *{}xp*\n",
+                                                ":mountain: Land Available: *{} pieces* _(+{} pieces)_"
+                                            ),
+                                            advancement.achiever_title,
+                                            advancement.title,
+                                            advancement.description,
+                                            advancement.xp,
+                                            profile_sum.land,
+                                            match advancement.kind {
+                                                config::HacksteadAdvancementKind::Land { pieces } => pieces,
+                                            }
+                                        )),
+                                        "accessory": {
+                                            "type": "image",
+                                            "image_url": format!("http://{}/gotchi/img/icon/seedlet.png", *URL),
+                                            "alt_text": "happy shiny better hackstead",
                                         }
-                                    )),
-                                    "accessory": {
-                                        "type": "image",
-                                        "image_url": format!("http://{}/gotchi/img/icon/seedlet.png", *URL),
-                                        "alt_text": "happy shiny better hackstead",
-                                    }
-                                }),
-                                comment("SUPER EXCITING LEVELING UP NOISES"),
-                            ]));
+                                    }),
+                                    comment("SUPER EXCITING LEVELING UP NOISES"),
+                                ]));
+                            }
                         }
                     }
                 }
@@ -3003,7 +3668,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .chunks(25)
                         .map(|items| {
                             db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                                request_items: [(core::TABLE_NAME.to_string(), items.to_vec())]
+                                request_items: [(hcor::TABLE_NAME.to_string(), items.to_vec())]
                                     .iter()
                                     .cloned()
                                     .collect(),
@@ -3030,6 +3695,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .try_for_each_concurrent(None, |(who, blocks)| {
                             dm_blocks(who.clone(), blocks.to_vec())
                         }),
+                    stream::iter(market_logs)
+                        .map(|x| Ok(x))
+                        .try_for_each_concurrent(None, |blocks| {
+                            market::log_blocks(blocks)
+                        }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
             }
@@ -3044,6 +3714,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 hackstead,
                 hackmarket,
                 action_endpoint,
+                egghatchwhen,
+                hgive,
                 event::challenge,
                 event::non_challenge_event,
                 stateofsteading,

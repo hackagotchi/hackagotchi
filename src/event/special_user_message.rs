@@ -9,7 +9,7 @@ lazy_static::lazy_static! {
 }
 fn spawn_command<'a>(
     c: regex::Captures<'a>,
-    r: Message<'a>,
+    r: Message,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
     async move {
@@ -72,16 +72,10 @@ fn spawn_command<'a>(
 
         // todo: async concurrency
         for _ in 0_usize..amount {
-            Hacksteader::give_possession(
+            Hacksteader::spawn_possession(
                 &dyn_db(),
                 receiver.clone(),
-                &Possession::new(
-                    archetype_handle,
-                    possess::Owner {
-                        id: receiver.clone(),
-                        acquisition: possess::Acquisition::spawned(),
-                    },
-                ),
+                archetype_handle,
             )
             .await
             .map_err(|e| {
@@ -103,7 +97,7 @@ lazy_static::lazy_static! {
 }
 fn gp_dump_command<'a>(
     c: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
     async move {
@@ -134,13 +128,13 @@ lazy_static::lazy_static! {
 }
 fn yank_config<'a>(
     _: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
     const CHANTING_DESCRIPTIONS: &'static [&'static str] = &[
         "eerie",
         "eldritch",
-        "rythmic",
+        "rhythmic",
         "spooky",
         "tribal",
         "unholy",
@@ -171,7 +165,7 @@ lazy_static::lazy_static! {
 }
 fn stomp_command<'a>(
     _: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     to_farming: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
     async move {
@@ -194,7 +188,7 @@ lazy_static::lazy_static! {
 }
 fn slaughter_command<'a>(
     _: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
     async move {
@@ -217,7 +211,7 @@ lazy_static::lazy_static! {
 }
 fn nab_command<'a>(
     c: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
     async move {
@@ -234,7 +228,7 @@ fn nab_command<'a>(
         let db = &dyn_db();
 
         let scan = db.scan(rusoto_dynamodb::ScanInput {
-            table_name: core::TABLE_NAME.to_string(),
+            table_name: hcor::TABLE_NAME.to_string(),
             filter_expression: Some("cat = :item_cat AND archetype_handle = :ah".to_string()),
             expression_attribute_values: Some(
                 [
@@ -277,7 +271,7 @@ fn nab_command<'a>(
                         .chunks(25)
                         .map(|items| {
                             db.batch_write_item(rusoto_dynamodb::BatchWriteItemInput {
-                                request_items: [(core::TABLE_NAME.to_string(), items.to_vec())]
+                                request_items: [(hcor::TABLE_NAME.to_string(), items.to_vec())]
                                     .iter()
                                     .cloned()
                                     .collect(),

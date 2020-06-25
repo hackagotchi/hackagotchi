@@ -2,10 +2,13 @@
 	"plants": {
 		"sheet_id": "129av9xlxkby72vkYOJrKHN1ybEM1EGY_YHGsFoSgGwo",
 		"include": [
-			"bractus",
-			"coffea_cyl",
-			"hacker_vibes_vine"
+			"Bractus",
+			"Coffea Cyl",
+			"Hacker Vibes Vine",
+      "Aloe Avanta",
+      "Tinkerstool"
 		]
 	},
-	"hackstead_advancements_sheet_id": "1GzSlqvKX27lCN_jSb8wc0hLTrwxiRig0t9F24fozqgU"
+	"hackstead_advancements_sheet_id": "1GzSlqvKX27lCN_jSb8wc0hLTrwxiRig0t9F24fozqgU",
+	"items_sheet_id": "1vcUd5_dXNQVanRP1xwHTsMs5N0iuRbCLnOg7J5KypOE"
 }
