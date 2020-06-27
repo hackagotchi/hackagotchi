@@ -4,5 +4,3 @@
 *.swo
 
 .env
-
-Cargo.lock
