@@ -69,28 +69,33 @@ fn hackmarket_fees<'a>(
             None => futures::try_join!(
                 market::place_on_market(&db, key, price, name.clone()),
                 market::log_blocks(
-                    format!("A {} has gone up for sale for {} GP!", possession.name, price).to_string(),
+                    format!(
+                        "A {} has gone up for sale for {} GP!",
+                        possession.name, price
+                    )
+                    .to_string(),
                     vec![
-                    json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            "A *{}* has gone up for sale! \
-                            <@{}> is selling it on the hackmarket for *{} GP*!",
-                            possession.name, paid_invoice.invoicee, price
-                        )),
-                        "accessory": {
-                            "type": "image",
-                            "image_url": format!(
-                                "http://{}/gotchi/img/{}/{}.png",
-                                *URL,
-                                category,
-                                filify(&possession.name)
-                            ),
-                            "alt_text": "Hackpheus sitting on bags of money!",
-                        }
-                    }),
-                    comment("QWIK U BETTR BYE ET B4 SUM1 EYLS"),
-                ]),
+                        json!({
+                            "type": "section",
+                            "text": mrkdwn(format!(
+                                "A *{}* has gone up for sale! \
+                                <@{}> is selling it on the hackmarket for *{} GP*!",
+                                possession.name, paid_invoice.invoicee, price
+                            )),
+                            "accessory": {
+                                "type": "image",
+                                "image_url": format!(
+                                    "http://{}/gotchi/img/{}/{}.png",
+                                    *URL,
+                                    category,
+                                    filify(&possession.name)
+                                ),
+                                "alt_text": "Hackpheus sitting on bags of money!",
+                            }
+                        }),
+                        comment("QWIK U BETTR BYE ET B4 SUM1 EYLS"),
+                    ]
+                ),
             )
             .map(|_| ()),
             Some(_) => futures::try_join!(
@@ -160,7 +165,7 @@ fn hackmarket_purchase<'a>(
                         format!("the {} you tried to buy has already been sold", name),
                     ),
                     dm_blocks(
-                        paid_invoice.invoicee.clone(), 
+                        paid_invoice.invoicee.clone(),
                         "Sale failed! Your GP has been refunded.".to_string(),
                         vec![json!({
                         "type": "section",
@@ -240,7 +245,7 @@ fn hackmarket_purchase<'a>(
                     comment("U NO GET 2 BYE DAT 1"),
                 ]),
                 dm_blocks(
-                    seller.clone(), 
+                    seller.clone(),
                     format!("Your sale went through! You earned {} gp.", price).to_string(),
                     vec![
                     json!({
@@ -288,7 +293,7 @@ fn start_hackstead_invoice_payment<'a>(
                 .map_err(|_| "Couldn't put you in the hacksteader database!")?;
 
             dm_blocks(
-                paid_invoice.invoicee.clone(), 
+                paid_invoice.invoicee.clone(),
                 "Welcome to Hackagotchi! Click me for more info.".to_string(),
                 vec![
                  json!({
