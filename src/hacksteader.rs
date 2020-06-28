@@ -484,27 +484,31 @@ impl Plant {
 }
 
 #[derive(Clone, Debug)]
-pub struct NeighborBonuses(Vec<(
-    Option<uuid::Uuid>,
-    config::ArchetypeHandle,
-    (config::PlantAdvancement, config::PlantAdvancementKind),
-)>);
+pub struct NeighborBonuses(
+    Vec<(
+        Option<uuid::Uuid>,
+        config::ArchetypeHandle,
+        (config::PlantAdvancement, config::PlantAdvancementKind),
+    )>,
+);
 impl NeighborBonuses {
     pub fn bonuses_for_plant(
         self,
         tile_id: uuid::Uuid,
-        ah: config::ArchetypeHandle
+        ah: config::ArchetypeHandle,
     ) -> Vec<config::PlantAdvancement> {
-        self
-            .0
+        self.0
             .into_iter()
             // neighbor bonuses apply to plants with matching archetype handles
             // coming from different tiles, if the tile is known.
             // if the tile isn't known, the bonus will still apply if the archetype
             // handle matches.
-            .filter(|(from, o_ah, _)| *o_ah == ah && match from {
-                Some(f) => *f != tile_id,
-                None => true
+            .filter(|(from, o_ah, _)| {
+                *o_ah == ah
+                    && match from {
+                        Some(f) => *f != tile_id,
+                        None => true,
+                    }
             })
             .map(|(_, _, (bonus, _))| bonus)
             .collect()
@@ -547,55 +551,53 @@ impl Hacksteader {
         Ok(())
     }
 
-    pub fn neighbor_bonuses(
-        &self,
-    ) -> NeighborBonuses {
+    pub fn neighbor_bonuses(&self) -> NeighborBonuses {
         use config::{PlantAdvancement, PlantAdvancementKind};
         use PlantAdvancementKind::*;
 
-        fn unsheath_neighbor(adv: &PlantAdvancement) -> Option<(PlantAdvancement, PlantAdvancementKind)> {
+        fn unsheath_neighbor(
+            adv: &PlantAdvancement,
+        ) -> Option<(PlantAdvancement, PlantAdvancementKind)> {
             match &adv.kind {
                 Neighbor(a) => Some((adv.clone(), *a.clone())),
-                    _ => None,
+                _ => None,
             }
         }
- 
-        NeighborBonuses(self.land
-            .iter()
-            .filter_map(|tile| Some((tile.id, tile.plant.as_ref()?)))
-            .flat_map(|(steader, plant)| {
-                plant
-                    .advancements
-                    .unlocked(plant.xp)
-                    .filter_map(move |adv| {
-                        Some((
-                            Some(steader.clone()),
-                            plant.archetype_handle,
-                            unsheath_neighbor(adv)?,
-                        ))
-                    })
-            })
-            .chain(
-                self.gotchis.iter().filter_map(|g| {
+
+        NeighborBonuses(
+            self.land
+                .iter()
+                .filter_map(|tile| Some((tile.id, tile.plant.as_ref()?)))
+                .flat_map(|(steader, plant)| {
+                    plant
+                        .advancements
+                        .unlocked(plant.xp)
+                        .filter_map(move |adv| {
+                            Some((
+                                Some(steader.clone()),
+                                plant.archetype_handle,
+                                unsheath_neighbor(adv)?,
+                            ))
+                        })
+                })
+                .chain(self.gotchis.iter().filter_map(|g| {
                     let (name, effect) = g.inner.plant_effects.as_ref()?;
                     Some((
                         None,
                         CONFIG.find_plant_handle(&name).expect("unknown handle"),
-                        (effect.clone(), effect.kind.clone())
+                        (effect.clone(), effect.kind.clone()),
                     ))
-                })
-            )
-            .chain(
-                self.inventory.iter().filter_map(|i| {
+                }))
+                .chain(self.inventory.iter().filter_map(|i| {
                     let (name, effect) = i.kind.keepsake()?.plant_effects.as_ref()?;
                     Some((
                         None,
                         CONFIG.find_plant_handle(&name).expect("unknown handle"),
-                        (effect.clone(), effect.kind.clone())
+                        (effect.clone(), effect.kind.clone()),
                     ))
-                })
-            )
-            .collect())
+                }))
+                .collect(),
+        )
     }
 
     pub async fn give_possession(
