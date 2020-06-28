@@ -2680,22 +2680,23 @@ async fn action_endpoint(
                 "type": "section",
                 "text": mrkdwn("*Yield Items*".to_string())
             }));
-            for &(config::SpawnRate(guard, (lo, hi)), ah) in sum.yields.iter() {
-                let arch = match CONFIG.possession_archetypes.get(ah) {
+            for y in sum.yields.iter() {
+                let arch = match CONFIG.possession_archetypes.get(y.yields) {
                     Some(arch) => arch,
                     None => {
-                        error!("unknown arch in yield {}", ah);
+                        error!("unknown arch in yield {}", y.yields);
                         continue;
                     }
                 };
                 let name = &arch.name;
 
+                let (lo, hi) = y.amount;
                 blocks.push(comment(format!(
                     "{}between *{}* and *{}* {} _{}_",
-                    if guard == 1.0 {
+                    if y.chance == 1.0 {
                         "".to_string()
                     } else {
-                        format!("up to *{:.1}*% chance of ", guard * 100.0)
+                        format!("up to *{:.1}*% chance of ", y.chance * 100.0)
                     },
                     lo.floor(),
                     hi.ceil(),
