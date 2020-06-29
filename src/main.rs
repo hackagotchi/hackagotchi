@@ -2979,7 +2979,7 @@ pub struct ItemApplication {
     item: uuid::Uuid,
 }
 
-#[tokio::main]
+#[rocket::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     use rocket_contrib::serve::StaticFiles;
 
@@ -3534,16 +3534,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 n if n > 0.0 => n,
                                 _ if plant.base_yield_duration.is_some() => {
                                     let owner = &tile.steader;
-                                    let yielded = config::spawn(&plant_sum.yields, &mut rand::thread_rng())
-                                        .map(|ah| Possession::new(ah, possess::Owner::farmer(owner.clone())))
-                                        .collect::<Vec<Possession>>();
+                                    let (yielded, xp_bonuses): (Vec<_>, Vec<_>) = config::spawn(&plant_sum.yields, &mut rand::thread_rng())
+                                        .map(|(ah, xp)| (Possession::new(ah, possess::Owner::farmer(owner.clone())), xp))
+                                        .unzip();
+                                    let earned_xp = xp_bonuses.into_iter().sum::<usize>() as u64;
+
+                                    plant.queued_xp_bonus += earned_xp;
 
                                     let mut msg = vec![
                                         json!({
                                             "type": "section",
                                             "text": mrkdwn(format!(
-                                                "Your *{}* has produced a crop yield for you!",
+                                                concat!(
+                                                    "Your *{}* has produced a crop yield for you!\n",
+                                                    "This earned it {} xp!"
+                                                ),
                                                 plant.name,
+                                                earned_xp,
                                             )),
                                             "accessory": {
                                                 "type": "image",
@@ -3736,7 +3743,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             "/gotchi/img",
             StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
         )
-        .serve()
+        .launch()
         .await
         .expect("launch fail");
 
