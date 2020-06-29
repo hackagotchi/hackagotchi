@@ -110,7 +110,7 @@ async fn gift_dm(
     possession: &Possession,
     count: usize,
 ) -> Result<(), String> {
-    dm_blocks(new_owner.to_string(), {
+    dm_blocks(new_owner.to_string(), "You've received a gift!".to_string(), {
         // TODO: with_capacity optimization
         let mut blocks = vec![
             json!({
@@ -3726,14 +3726,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     stream::iter(profiles.clone())
                         .map(|x| Ok(x))
                         .try_for_each_concurrent(None, |(who, _)| { update_user_home_tab(who) }),
-                    stream::iter(dms)
-                        .map(|x| Ok(x))
-                        .try_for_each_concurrent(None, |(who, blocks)| {
-                            dm_blocks(who.clone(), blocks.to_vec())
-                        }),
+                    stream::iter(dms).map(|x| Ok(x)).try_for_each_concurrent(
+                        None,
+                        |(who, blocks)| {
+                            dm_blocks(
+                                who.clone(),
+                                "your plant leveled up!".to_string(),
+                                blocks.to_vec(),
+                            )
+                        }
+                    ),
                     stream::iter(market_logs)
                         .map(|x| Ok(x))
-                        .try_for_each_concurrent(None, |blocks| { market::log_blocks(blocks) }),
+                        .try_for_each_concurrent(None, |blocks| {
+                            market::log_blocks("".to_string(), blocks)
+                        }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
             }

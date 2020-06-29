@@ -375,7 +375,6 @@ fn start_hackstead_invoice_payment<'a>(
                         .filter(|g| dbg!(g.welcome_gift))
                         .map(|_| i)
                 });
-            
             for ah in welcome_gifts {
                 Hacksteader::spawn_possession(&dyn_db(), new_user.clone(), ah)
                     .await

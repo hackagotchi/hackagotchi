@@ -1,6 +1,6 @@
 use config::{
-    Advancement, AdvancementSet, AdvancementSum, HacksteadAdvancementSet, PlantArchetype,
-    Archetype as PossessionArchetype,
+    Advancement, AdvancementSet, AdvancementSum, Archetype as PossessionArchetype,
+    HacksteadAdvancementSet, PlantArchetype,
 };
 use hcor::config;
 use reqwest::Client;
@@ -196,8 +196,7 @@ impl Sheet {
             })
         }
 
-        self
-            .values
+        self.values
             .into_iter()
             .enumerate()
             .skip(row_offset)
@@ -227,7 +226,7 @@ impl Sheet {
                         e,
                         0,
                     )
-                })?)
+                })?),
             }
         };
 
@@ -326,9 +325,7 @@ fn sheet_to_advancement() {
         .collect(),
     };
 
-    let mut adv: PlantAdvancementSet = sheet
-        .to_advancements(0)
-        .unwrap();
+    let mut adv: PlantAdvancementSet = sheet.to_advancements(0).unwrap();
 
     // the one with 0 xp should become the base
     assert!(
@@ -362,7 +359,9 @@ fn sheet_to_advancement() {
 
 #[tokio::test]
 async fn yank_config_full() {
-    yank_config().await.unwrap_or_else(|e| panic!("couldn't yank: {}", e))
+    yank_config()
+        .await
+        .unwrap_or_else(|e| panic!("couldn't yank: {}", e))
 }
 
 pub async fn yank_config() -> Result<(), YankError> {
@@ -374,42 +373,37 @@ pub async fn yank_config() -> Result<(), YankError> {
         Vec<PlantArchetype>,
         HacksteadAdvancementSet,
         Vec<PossessionArchetype>,
-    ) =
-        futures::try_join!(
-            stream::iter(C_CONFIG.plants.include.clone())
-                .map(|plant_name| async {
-                    yank_sheet(&client, &C_CONFIG.plants.sheet_id, plant_name.clone())
-                        .await?
-                        .to_plant_archetype()
-                        .map_err(|e| YankError::SheetError(plant_name, e))
-                })
-                .buffer_unordered(50)
-                .try_collect::<Vec<PlantArchetype>>(),
-            async {
-                yank_sheet(
-                    &client,
-                    &C_CONFIG.hackstead_advancements_sheet_id,
-                    "Hackstead Advancements".to_string(),
-                )
-                .await
-                .and_then(|s| {
-                    s.to_advancements(1)
-                        .map_err(|e| YankError::SheetError("Hackstead Advancements".to_string(), e))
-                })
-            },
-            async {
-                yank_sheet(
-                    &client,
-                    &C_CONFIG.items_sheet_id,
-                    "Items".to_string(),
-                )
+    ) = futures::try_join!(
+        stream::iter(C_CONFIG.plants.include.clone())
+            .map(|plant_name| async {
+                yank_sheet(&client, &C_CONFIG.plants.sheet_id, plant_name.clone())
+                    .await?
+                    .to_plant_archetype()
+                    .map_err(|e| YankError::SheetError(plant_name, e))
+            })
+            .buffer_unordered(50)
+            .try_collect::<Vec<PlantArchetype>>(),
+        async {
+            yank_sheet(
+                &client,
+                &C_CONFIG.hackstead_advancements_sheet_id,
+                "Hackstead Advancements".to_string(),
+            )
+            .await
+            .and_then(|s| {
+                s.to_advancements(1)
+                    .map_err(|e| YankError::SheetError("Hackstead Advancements".to_string(), e))
+            })
+        },
+        async {
+            yank_sheet(&client, &C_CONFIG.items_sheet_id, "Items".to_string())
                 .await
                 .and_then(|s| {
                     s.to_possession_archetypes(1)
                         .map_err(|e| YankError::SheetError("Items".to_string(), e))
                 })
-            }
-        )?;
+        }
+    )?;
 
     plants.sort_by_key(|p| {
         C_CONFIG
@@ -423,22 +417,20 @@ pub async fn yank_config() -> Result<(), YankError> {
     let config = config::Config {
         special_users: vec![],
         profile_archetype: config::ProfileArchetype {
-            advancements: hackstead_advancements
+            advancements: hackstead_advancements,
         },
         plant_archetypes: plants,
         possession_archetypes: items,
     };
 
-    config::check_archetype_name_matches(&config)
-        .map_err(|e| YankError::ArchetypeNameError(e))?;
+    config::check_archetype_name_matches(&config).map_err(|e| YankError::ArchetypeNameError(e))?;
 
     std::fs::write(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .join("hcor/config/content.json"),
-        &serde_json::to_string_pretty(&config)
-            .map_err(|e| YankError::SerializeConfigError(e))?
+        &serde_json::to_string_pretty(&config).map_err(|e| YankError::SerializeConfigError(e))?,
     )
     .map_err(|e| YankError::WriteConfigError(e))
 }

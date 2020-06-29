@@ -91,17 +91,13 @@ fn spawn_command<'a>(
 
         // todo: async concurrency
         for _ in 0_usize..amount {
-            Hacksteader::spawn_possession(
-                &dyn_db(),
-                receiver.clone(),
-                archetype_handle,
-            )
-            .await
-            .map_err(|e| {
-                let a = format!("couldn't spawn possession: {}", e);
-                error!("{}", e);
-                a
-            })?;
+            Hacksteader::spawn_possession(&dyn_db(), receiver.clone(), archetype_handle)
+                .await
+                .map_err(|e| {
+                    let a = format!("couldn't spawn possession: {}", e);
+                    error!("{}", e);
+                    a
+                })?;
         }
         Ok(())
     }
