@@ -2214,7 +2214,6 @@ async fn action_endpoint(
                 .iter()
                 .cloned()
                 .filter_map(|p| p.try_into().ok())
-                .take(40)
                 .collect();
 
             Modal {

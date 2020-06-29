@@ -116,7 +116,7 @@ fn hackmarket_fees<'a>(
             .map(|_| ()),
         }?;
 
-        //banker::balance().await?;
+        banker::balance().await?;
 
         Ok(())
     }
