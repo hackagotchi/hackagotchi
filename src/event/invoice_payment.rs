@@ -50,7 +50,7 @@ lazy_static::lazy_static! {
 }
 fn hackmarket_fees<'a>(
     c: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
@@ -111,7 +111,7 @@ fn hackmarket_fees<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to sell for {}gp has already been sold, ",
+                                "The {} you tried to sell for {}gp is no longer on the market, ",
                                 "so your {}gp market fee has been refunded."
                             ),
                             name,
@@ -139,7 +139,7 @@ lazy_static::lazy_static! {
 }
 fn hackmarket_purchase<'a>(
     c: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
@@ -154,7 +154,7 @@ fn hackmarket_purchase<'a>(
         let seller = from.ok_or_else(|| "no seller in sale object parsed from invoice reason".to_string())?;
 
         let db = dyn_db();
-        let key = core::Key { category, id };
+        let key = hcor::Key { category, id };
         match hacksteader::get_possession(&db, key).await?.sale {
             Some(sale) => sale,
             None => {
@@ -162,7 +162,7 @@ fn hackmarket_purchase<'a>(
                     banker::pay(
                         paid_invoice.invoicee.clone(),
                         price,
-                        format!("the {} you tried to buy has already been sold", name),
+                        format!("the {} you tried to buy has is no longer on the market", name),
                     ),
                     dm_blocks(
                         paid_invoice.invoicee.clone(),
@@ -171,7 +171,7 @@ fn hackmarket_purchase<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to buy for {}gp has already been sold, ",
+                                "The {} you tried to buy for {}gp is no longer on the market, ",
                                 "so your GP has been refunded."
                             ),
                             name,
@@ -218,7 +218,7 @@ fn hackmarket_purchase<'a>(
                     "REMOVE price, market_name ",
                     "SET steader = :new_owner, ownership_log = list_append(ownership_log, :ownership_entry)"
                 ).to_string()),
-                table_name: core::TABLE_NAME.to_string(),
+                table_name: hcor::TABLE_NAME.to_string(),
                 ..Default::default()
             }).map_err(|e| format!("database err: {}", e)),
             banker::pay(seller.clone(), price, paid_for),
@@ -283,12 +283,13 @@ lazy_static::lazy_static! {
 }
 fn start_hackstead_invoice_payment<'a>(
     _: regex::Captures<'a>,
-    _: Message<'a>,
+    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
-        if !hacksteader::exists(&dyn_db(), paid_invoice.invoicee.clone()).await {
-            Hacksteader::new_in_db(&dyn_db(), paid_invoice.invoicee.clone())
+        let new_user = paid_invoice.invoicee.clone();
+        if !hacksteader::exists(&dyn_db(), new_user.clone()).await {
+            Hacksteader::new_in_db(&dyn_db(), new_user.clone())
                 .await
                 .map_err(|_| "Couldn't put you in the hacksteader database!")?;
 
@@ -299,17 +300,91 @@ fn start_hackstead_invoice_payment<'a>(
                  json!({
                      "type": "section",
                      "text": mrkdwn(
-                         "Congratulations, new Hacksteader! \
-                         Welcome to the community!\n\n\
-                         :house: Manage your hackstead in the home tab above\n\
-                         :harder-flex: Show anyone a snapshot of your hackstead with /hackstead\n\
-                         :sleuth_or_spy: Look up anyone else's hackstead with /hackstead @<their name>\n\
-                         :money_with_wings: Shop from the user-run hacksteaders' market with /hackmarket\n\n\
-                         You might want to start by buying some seeds there and planting them at your hackstead!"
+                         "Happy Hacksteading, newcomer! Welcome to Hackagotchi!",
+                     )
+                 }),
+                 json!({ "type": "divider" }),
+                 json!({
+                     "type": "section",
+                     "text": mrkdwn(
+                         ":house: You can *manage and monitor* your hackstead with the *Home tab*!\n\n\
+                         \t_Here you can *keep inventory of the items, plants, and gotchi* you have! \
+                         This is also where you *plant seeds*, *hatch eggs*, and *use items*!_"
+                     ),
+                 }),
+                 json!({ "type": "divider" }),
+                 json!({
+                     "type": "section",
+                     "text": mrkdwn(
+                         ":information_source: \
+                         *Use commands* like `/hstead`, `/hstreet`, `/htome`, and `/stateofsteading` \
+                         for all the latest in Hackagotchi happenings! \n\n\
+                         \t_`/hstead @user` lets you *see a user's hackstead*, \
+                         `/hstreet` *opens Hackagotchi's market* to buy items, \
+                         `/htome <item name>` gives you basic *information about items*, \
+                         and `/stateofsteading` gives you an *overview of the agrarian economy*._"
+                     )
+                 }),
+                 json!({ "type": "divider" }),
+                 json!({
+                     "type": "section",
+                     "text": mrkdwn(
+                         ":left_speech_bubble: *Join channels* like #hackstead and #hackstreet \
+                         to *interact with your fellow Hacksteaders*!\n\n\
+                         \t_#hackstead is a great medium for *conversations or suggestions* with other players \
+                         and hackagotchi's developers. \
+                         #hackstreet provides access to *a live feed of market transactions* \
+                         and is a good place to *advertise offers and trades*._"
+                     )
+                 }),
+                 json!({ "type": "divider" }),
+                 json!({
+                     "type": "section",
+                     "text": mrkdwn(
+                         "We're working on an achievements system to make it easier to get started, \
+                         but until then, see if you can complete each of the following:\n\n\
+                         * Buy a seed ( :coffea_cyl_seed: / :hacker_vibes_vine_seed: / :bractus_seed: ) from `/hstreet` and plant it!\n\
+                         * Craft a compressed resource ( :crystcyl: / :hacksprit: / :bressence: )!\n\
+                         * Sacrifice your plant to craft an egg ( :cyl_egg: / :hacker_egg: / :bread_egg: )!\n\
+                         * Get a Land Deed :land_deed: from an egg or from a friend to grow two plants at once!\n\
+                         * Collect enough Baglings ( :crystalline_buzzwing_bagling: / :spirited_buzzwing_bagling: / :doughy_buzzwing_bagling: ) to get a Megabox ( :crystalline_buzzwing_megabox: / :spirited_buzzwing_megabox: / :doughy_buzzwing_megabox: ), and open it for loot!\n\
+                         * Get a :tinkerspore: or an :aloe_avanta_seed: from an egg or from a friend to grow start growing some very rare and overpowered plants!",
+                     )
+                 }),
+                 json!({ "type": "divider" }),
+                 json!({
+                     "type": "section",
+                     "text": mrkdwn(
+                         "_For more information, \
+                         feel free to contact the Hackagotchi Dev Team with @hackagotchi-dev-team, \
+                         visit our website hackagotch.io, \
+                         or avail yourself to the <https://hackstead.fandom.com|community run wiki>._"
                      ),
                  }),
                  comment("LET'S HACKSTEAD, FRED!")
             ]).await?;
+
+            let welcome_gifts = CONFIG
+                .possession_archetypes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| {
+                    p
+                        .kind
+                        .gotchi()
+                        .filter(|g| dbg!(g.welcome_gift))
+                        .map(|_| i)
+                });
+            
+            for ah in welcome_gifts {
+                Hacksteader::spawn_possession(&dyn_db(), new_user.clone(), ah)
+                    .await
+                    .map_err(|e| {
+                        let a = format!("couldn't spawn possession: {}", e);
+                        error!("{}", e);
+                        a
+                    })?;
+            }
         }
         Ok(())
     }

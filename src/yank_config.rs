@@ -1,7 +1,8 @@
 use config::{
     Advancement, AdvancementSet, AdvancementSum, HacksteadAdvancementSet, PlantArchetype,
+    Archetype as PossessionArchetype,
 };
-use core::config;
+use hcor::config;
 use reqwest::Client;
 use rocket::tokio;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,7 @@ use std::fmt;
 struct CConfig {
     plants: PlantCConfig,
     hackstead_advancements_sheet_id: String,
+    items_sheet_id: String,
 }
 #[derive(Serialize, Deserialize, Debug)]
 struct PlantCConfig {
@@ -26,6 +28,10 @@ pub enum YankError {
     RequestError(&'static str, reqwest::Error),
     /// Contains: Sheet Name, Error
     SheetError(String, SheetError),
+    /// Invalid Name
+    ArchetypeNameError(String),
+    SerializeConfigError(serde_json::Error),
+    WriteConfigError(std::io::Error),
 }
 impl fmt::Display for YankError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -33,6 +39,9 @@ impl fmt::Display for YankError {
         match self {
             RequestError(msg, e) => write!(f, "Request Error({}): {}", msg, e),
             SheetError(sheet_name, e) => write!(f, "Error parsing \"{}\" sheet: {}", sheet_name, e),
+            ArchetypeNameError(e) => write!(f, "Archetype Name Error: {}", e),
+            SerializeConfigError(e) => write!(f, "Error serializing the config: {}", e),
+            WriteConfigError(e) => write!(f, "Error writing the config to a file: {}", e),
         }
     }
 }
@@ -64,7 +73,7 @@ impl fmt::Display for SheetError {
                 f,
                 concat!(
                     "Invalid json in \"{}\" cell on row {}\n",
-                    "full json: \n{}\n\n",
+                    "full json: \n```{}``` ",
                     "error: {}\n",
                 ),
                 cell_desc,
@@ -166,6 +175,37 @@ impl Sheet {
         })
     }
 
+    fn to_possession_archetypes(
+        self,
+        row_offset: usize,
+    ) -> Result<Vec<PossessionArchetype>, SheetError> {
+        // convert a single advancement
+        fn row_to_possession_archetype(
+            mut v: Vec<String>,
+            row: usize,
+        ) -> Result<PossessionArchetype, SheetError> {
+            let value = v.pop().ok_or(MissingCell("Value", row))?;
+            let kind = v.pop().ok_or(MissingCell("Kind", row))?;
+            let kind_json = format!("{{ \"{}\": {} }}", kind, value);
+
+            Ok(PossessionArchetype {
+                kind: serde_json::from_str(&kind_json)
+                    .map_err(|e| CellJsonError("value", e, kind_json, row))?,
+                description: v.pop().ok_or(MissingCell("Description", row))?,
+                name: v.pop().ok_or(MissingCell("Title", row))?,
+            })
+        }
+
+        self
+            .values
+            .into_iter()
+            .enumerate()
+            .skip(row_offset)
+            // adding one because google sheets starts at 1 not 0
+            .map(|(i, x)| row_to_possession_archetype(x, i + row_offset + 1))
+            .collect()
+    }
+
     fn to_plant_archetype(self) -> Result<PlantArchetype, SheetError> {
         if self.values.is_empty() {
             return Err(Missing("entire sheet"));
@@ -179,13 +219,16 @@ impl Sheet {
                 .next()
                 .ok_or(Missing("first cell on the first row"))?;
             let base = sections.next().ok_or(Missing("colon in first cell"))?;
-            base.trim().parse().map_err(|e| {
-                CellFloatParsingError(
-                    "number after colon in first cell for base yield duration",
-                    e,
-                    0,
-                )
-            })?
+            match base.trim() {
+                "NONE" => None,
+                other => Some(other.parse().map_err(|e| {
+                    CellFloatParsingError(
+                        "number after colon in first cell for base yield duration",
+                        e,
+                        0,
+                    )
+                })?)
+            }
         };
 
         Ok(PlantArchetype {
@@ -246,7 +289,7 @@ async fn yank_sheet_not_empty() {
     let s = yank_sheet(
         &client,
         "129av9xlxkby72vkYOJrKHN1ybEM1EGY_YHGsFoSgGwo",
-        "bractus",
+        "bractus".to_string(),
     )
     .await;
 
@@ -265,6 +308,7 @@ fn sheet_to_advancement() {
     use config::{PlantAdvancementKind, PlantAdvancementSet};
 
     let sheet = Sheet {
+        name: "test plant".to_string(),
         values: vec![
             vec!["0", "Title", "Desc", "A_Title", "Art", "YieldSize", "1.1"],
             vec![
@@ -282,7 +326,9 @@ fn sheet_to_advancement() {
         .collect(),
     };
 
-    let mut adv: PlantAdvancementSet = sheet.to_advancements().unwrap();
+    let mut adv: PlantAdvancementSet = sheet
+        .to_advancements(0)
+        .unwrap();
 
     // the one with 0 xp should become the base
     assert!(
@@ -314,12 +360,21 @@ fn sheet_to_advancement() {
     );
 }
 
+#[tokio::test]
+async fn yank_config_full() {
+    yank_config().await.unwrap_or_else(|e| panic!("couldn't yank: {}", e))
+}
+
 pub async fn yank_config() -> Result<(), YankError> {
     use futures::stream::{self, StreamExt, TryStreamExt};
 
     let client = reqwest::Client::new();
 
-    let (plant_archetypes, hackstead_advancements): (Vec<PlantArchetype>, HacksteadAdvancementSet) =
+    let (mut plants, hackstead_advancements, items): (
+        Vec<PlantArchetype>,
+        HacksteadAdvancementSet,
+        Vec<PossessionArchetype>,
+    ) =
         futures::try_join!(
             stream::iter(C_CONFIG.plants.include.clone())
                 .map(|plant_name| async {
@@ -341,10 +396,49 @@ pub async fn yank_config() -> Result<(), YankError> {
                     s.to_advancements(1)
                         .map_err(|e| YankError::SheetError("Hackstead Advancements".to_string(), e))
                 })
+            },
+            async {
+                yank_sheet(
+                    &client,
+                    &C_CONFIG.items_sheet_id,
+                    "Items".to_string(),
+                )
+                .await
+                .and_then(|s| {
+                    s.to_possession_archetypes(1)
+                        .map_err(|e| YankError::SheetError("Items".to_string(), e))
+                })
             }
         )?;
 
-    println!("{:#?}", plant_archetypes);
+    plants.sort_by_key(|p| {
+        C_CONFIG
+            .plants
+            .include
+            .iter()
+            .position(|n| *n == p.name)
+            .unwrap_or_else(|| panic!("couldn't find plant: {:?}", p.name))
+    });
 
-    Ok(())
+    let config = config::Config {
+        special_users: vec![],
+        profile_archetype: config::ProfileArchetype {
+            advancements: hackstead_advancements
+        },
+        plant_archetypes: plants,
+        possession_archetypes: items,
+    };
+
+    config::check_archetype_name_matches(&config)
+        .map_err(|e| YankError::ArchetypeNameError(e))?;
+
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("hcor/config/content.json"),
+        &serde_json::to_string_pretty(&config)
+            .map_err(|e| YankError::SerializeConfigError(e))?
+    )
+    .map_err(|e| YankError::WriteConfigError(e))
 }
