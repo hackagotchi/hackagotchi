@@ -166,7 +166,7 @@ fn hackmarket_purchase<'a>(
                     ),
                     dm_blocks(
                         paid_invoice.invoicee.clone(),
-                        "Sale failed! Your GP has been refunded.".to_string(),
+                        "Sorry, you couldn't purchase that! Your GP has been refunded.".to_string(),
                         vec![json!({
                         "type": "section",
                         "text": mrkdwn(format!(
@@ -227,7 +227,7 @@ fn hackmarket_purchase<'a>(
                 paid_invoice.invoicee,
                 name,
                 price
-            ).to_string(),
+                ).to_string(),
                 vec![
                     json!({
                         "type": "section",

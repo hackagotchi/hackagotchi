@@ -3553,9 +3553,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 n if n > 0.0 => n,
                                 _ if plant.base_yield_duration.is_some() => {
                                     let owner = &tile.steader;
-                                    let (yielded, xp_bonuses): (Vec<_>, Vec<_>) = config::spawn(&plant_sum.yields, &mut rand::thread_rng())
-                                        .map(|(ah, xp)| (Possession::new(ah, possess::Owner::farmer(owner.clone())), xp))
-                                        .unzip();
+                                    let (yielded, xp_bonuses): (Vec<_>, Vec<_>) =
+                                        config::spawn(&plant_sum.yields, &mut rand::thread_rng())
+                                            .map(|(ah, xp)| {
+                                                (
+                                                    Possession::new(
+                                                        ah,
+                                                        possess::Owner::farmer(owner.clone()),
+                                                    ),
+                                                    xp,
+                                                )
+                                            })
+                                            .unzip();
                                     let earned_xp = xp_bonuses.into_iter().sum::<usize>() as u64;
 
                                     plant.queued_xp_bonus += earned_xp;
@@ -3741,7 +3750,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     stream::iter(market_logs)
                         .map(|x| Ok(x))
                         .try_for_each_concurrent(None, |blocks| {
-                        market::log_blocks("Egg Hatch Complete!".to_string(), blocks)
+                            market::log_blocks("Egg Hatch Complete!".to_string(), blocks)
                         }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
