@@ -3741,7 +3741,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     stream::iter(market_logs)
                         .map(|x| Ok(x))
                         .try_for_each_concurrent(None, |blocks| {
-                            market::log_blocks("".to_string(), blocks)
+                        market::log_blocks("Egg Hatch Complete!".to_string(), blocks)
                         }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
