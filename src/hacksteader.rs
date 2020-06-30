@@ -1,8 +1,8 @@
 use config::{ArchetypeHandle, PlantArchetype, CONFIG};
 use hcor::config;
-use log::*;
 use hcor::possess;
 use hcor::{AttributeParseError, Category, Item, Key, Profile, TABLE_NAME};
+use log::*;
 use possess::{Possessed, Possession};
 use rusoto_core::RusotoError;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, PutItemError};
@@ -296,14 +296,12 @@ impl Effect {
         Ok(Self {
             until_finish: match m.get("until_finish") {
                 Some(x) => Some(
-                    x
-                        .n
-                        .as_ref()
+                    x.n.as_ref()
                         .ok_or(WronglyTypedField("until_finish"))?
                         .parse()
-                        .map_err(|e| FloatFieldParse("until_finish", e))?
+                        .map_err(|e| FloatFieldParse("until_finish", e))?,
                 ),
-                None => None
+                None => None,
             },
             item_archetype_handle: m
                 .get("item_archetype_handle")
@@ -354,10 +352,7 @@ impl Effect {
                     ));
                 }
 
-                a
-                .iter()
-                .cloned()
-                .collect()
+                a.iter().cloned().collect()
             }),
             ..Default::default()
         }
@@ -393,14 +388,13 @@ impl Craft {
                 .get("recipe_archetype_handle")
                 .ok_or(MissingField("until_finish"))
                 .and_then(|o| {
-                    Ok(o
-                        .n
+                    Ok(o.n
                         .as_ref()
                         .ok_or(WronglyTypedField("recipe_archetype_handle"))?
                         .parse()
                         .map_err(|e| IntFieldParse("recipe_archetype_handle", e))?)
                 })
-                .unwrap_or(0)
+                .unwrap_or(0),
         })
     }
 
@@ -444,77 +438,60 @@ impl Plant {
     }
 
     fn effect_advancements<'a>(&'a self) -> impl Iterator<Item = &'a config::PlantAdvancement> {
-        self
-            .effects
+        self.effects
             .iter()
-            .filter_map(|e| CONFIG.get_item_application_plant_advancement(
-                e.item_archetype_handle,
-                e.effect_archetype_handle
-            ))
+            .filter_map(|e| {
+                CONFIG.get_item_application_plant_advancement(
+                    e.item_archetype_handle,
+                    e.effect_archetype_handle,
+                )
+            })
             .map(|(_effect, adv)| adv)
     }
-    
     /// Excludes neighbor bonuses
     pub fn advancements_sum<'a>(
         &'a self,
         extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
     ) -> config::PlantAdvancementSum {
-        self
-            .advancements
-            .sum(
-                self.xp,
-                self
-                    .effect_advancements()
-                    .chain(extra_advancements)
-            )
+        self.advancements.sum(
+            self.xp,
+            self.effect_advancements().chain(extra_advancements),
+        )
     }
-    
     /// A sum struct for all of the possible advancements for this plant,
     /// plus any effects it has active.
     pub fn advancements_max_sum<'a>(
         &'a self,
         extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
     ) -> config::PlantAdvancementSum {
-        self
-            .advancements
-            .max(
-                self
-                    .effect_advancements()
-                    .chain(extra_advancements)
-            )
+        self.advancements
+            .max(self.effect_advancements().chain(extra_advancements))
     }
 
     pub fn neighborless_advancements_sum<'a>(
         &'a self,
         extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
     ) -> config::PlantAdvancementSum {
-        self
-            .advancements
-            .raw_sum(
-                self.xp,
-                self
-                    .effect_advancements()
-                    .chain(extra_advancements)
-            )
+        self.advancements.raw_sum(
+            self.xp,
+            self.effect_advancements().chain(extra_advancements),
+        )
     }
 
     pub fn unlocked_advancements<'a>(
         &'a self,
         extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
     ) -> impl Iterator<Item = &'a config::PlantAdvancement> {
-        self
-            .advancements
+        self.advancements
             .unlocked(self.xp)
             .chain(self.effect_advancements())
             .chain(extra_advancements)
     }
-    
     pub fn all_advancements<'a>(
         &'a self,
         extra_advancements: impl Iterator<Item = &'a config::PlantAdvancement>,
     ) -> impl Iterator<Item = &'a config::PlantAdvancement> {
-        self
-            .advancements
+        self.advancements
             .all()
             .chain(self.effect_advancements())
             .chain(extra_advancements)
@@ -540,26 +517,30 @@ impl Plant {
     }
 
     pub fn current_recipe_raw(&self) -> Option<config::Recipe<ArchetypeHandle>> {
-        self.craft.as_ref().and_then(|c| self.get_recipe_raw(c.recipe_archetype_handle))
+        self.craft
+            .as_ref()
+            .and_then(|c| self.get_recipe_raw(c.recipe_archetype_handle))
     }
 
     pub fn current_recipe(&self) -> Option<config::Recipe<&'static config::Archetype>> {
-        self
-            .current_recipe_raw()
-            .and_then(|x| x.lookup_handles())
+        self.current_recipe_raw().and_then(|x| x.lookup_handles())
     }
 
-    pub fn get_recipe_raw(&self, recipe_ah: ArchetypeHandle) -> Option<config::Recipe<ArchetypeHandle>> {
-        self
-            .advancements_sum(std::iter::empty())
+    pub fn get_recipe_raw(
+        &self,
+        recipe_ah: ArchetypeHandle,
+    ) -> Option<config::Recipe<ArchetypeHandle>> {
+        self.advancements_sum(std::iter::empty())
             .recipes
             .get(recipe_ah)
             .cloned()
     }
 
-    pub fn get_recipe(&self, recipe_ah: ArchetypeHandle) -> Option<config::Recipe<&'static config::Archetype>> {
-        self
-            .get_recipe_raw(recipe_ah)
+    pub fn get_recipe(
+        &self,
+        recipe_ah: ArchetypeHandle,
+    ) -> Option<config::Recipe<&'static config::Archetype>> {
+        self.get_recipe_raw(recipe_ah)
             .and_then(|x| x.lookup_handles())
     }
 
@@ -599,9 +580,7 @@ impl Plant {
             },
             effects: match m.get("effects") {
                 Some(e) => {
-                    e
-                        .l
-                        .as_ref()
+                    e.l.as_ref()
                         .ok_or(WronglyTypedField("effects"))?
                         .iter()
                         .filter_map(|v| match Effect::from_av(v) {
@@ -609,7 +588,7 @@ impl Plant {
                             Err(e) => {
                                 log::error!("error parsing effects item: {}", e);
                                 None
-                            },
+                            }
                         })
                         .collect::<Vec<Effect>>()
                 }
@@ -693,27 +672,31 @@ impl Plant {
 }
 
 #[derive(Clone, Debug)]
-pub struct NeighborBonuses(Vec<(
-    Option<uuid::Uuid>,
-    config::KeepPlants<config::ArchetypeHandle>,
-    (config::PlantAdvancement, config::PlantAdvancementKind),
-)>);
+pub struct NeighborBonuses(
+    Vec<(
+        Option<uuid::Uuid>,
+        config::KeepPlants<config::ArchetypeHandle>,
+        (config::PlantAdvancement, config::PlantAdvancementKind),
+    )>,
+);
 impl NeighborBonuses {
     pub fn bonuses_for_plant(
         self,
         tile_id: uuid::Uuid,
-        ah: config::ArchetypeHandle
+        ah: config::ArchetypeHandle,
     ) -> Vec<config::PlantAdvancement> {
-        self
-            .0
+        self.0
             .into_iter()
             // neighbor bonuses apply to plants with matching archetype handles
             // coming from different tiles, if the tile is known.
             // if the tile isn't known, the bonus will still apply if the archetype
             // handle matches.
-            .filter(|(from, keep_plants, _)| keep_plants.allows(&ah) && match from {
-                Some(f) => *f != tile_id,
-                None => true
+            .filter(|(from, keep_plants, _)| {
+                keep_plants.allows(&ah)
+                    && match from {
+                        Some(f) => *f != tile_id,
+                        None => true,
+                    }
             })
             .map(|(_, _, (bonus, _))| bonus)
             .collect()
@@ -756,62 +739,59 @@ impl Hacksteader {
         Ok(())
     }
 
-    pub fn neighbor_bonuses(
-        &self,
-    ) -> NeighborBonuses {
+    pub fn neighbor_bonuses(&self) -> NeighborBonuses {
         use config::{PlantAdvancement, PlantAdvancementKind};
         use PlantAdvancementKind::*;
 
-        fn unsheath_neighbor(adv: &PlantAdvancement) -> Option<(PlantAdvancement, PlantAdvancementKind)> {
+        fn unsheath_neighbor(
+            adv: &PlantAdvancement,
+        ) -> Option<(PlantAdvancement, PlantAdvancementKind)> {
             match &adv.kind {
                 Neighbor(a) => Some((adv.clone(), *a.clone())),
-                    _ => None,
+                _ => None,
             }
         }
- 
-        NeighborBonuses(self.land
-            .iter()
-            .filter_map(|tile| Some((tile.id, tile.plant.as_ref()?)))
-            .flat_map(|(steader, plant)| {
-                plant
-                    .unlocked_advancements(std::iter::empty())
-                    .filter_map(move |adv| {
-                        Some((
-                            Some(steader.clone()),
-                            config::KeepPlants::Only(vec![plant.archetype_handle]),
-                            unsheath_neighbor(adv)?,
-                        ))
-                    })
-            })
-            .chain(
-                self.gotchis.iter().flat_map(|g| {
-                    g
-                        .inner
-                        .plant_effects
-                        .iter()
-                        .map(|spa| (
+
+        NeighborBonuses(
+            self.land
+                .iter()
+                .filter_map(|tile| Some((tile.id, tile.plant.as_ref()?)))
+                .flat_map(|(steader, plant)| {
+                    plant
+                        .unlocked_advancements(std::iter::empty())
+                        .filter_map(move |adv| {
+                            Some((
+                                Some(steader.clone()),
+                                config::KeepPlants::Only(vec![plant.archetype_handle]),
+                                unsheath_neighbor(adv)?,
+                            ))
+                        })
+                })
+                .chain(self.gotchis.iter().flat_map(|g| {
+                    g.inner.plant_effects.iter().map(|spa| {
+                        (
                             None,
                             spa.keep_plants.lookup_handles().unwrap(),
-                            (spa.advancement.clone(), spa.advancement.kind.clone())
-                        ))
-                })
-            )
-            .chain(
-                self
-                    .inventory
-                    .iter()
-                    .filter_map(|i| Some(i.kind.keepsake()?.plant_effects.as_ref()))
-                    .flat_map(|plant_effects: &Vec<_>| {
-                        plant_effects
-                            .iter()
-                            .map(|spa| (
-                                None,
-                                spa.keep_plants.lookup_handles().unwrap(),
-                                (spa.advancement.clone(), spa.advancement.kind.clone())
-                            ))
+                            (spa.advancement.clone(), spa.advancement.kind.clone()),
+                        )
                     })
-            )
-            .collect())
+                }))
+                .chain(
+                    self.inventory
+                        .iter()
+                        .filter_map(|i| Some(i.kind.keepsake()?.plant_effects.as_ref()))
+                        .flat_map(|plant_effects: &Vec<_>| {
+                            plant_effects.iter().map(|spa| {
+                                (
+                                    None,
+                                    spa.keep_plants.lookup_handles().unwrap(),
+                                    (spa.advancement.clone(), spa.advancement.kind.clone()),
+                                )
+                            })
+                        }),
+                )
+                .collect(),
+        )
     }
 
     pub async fn give_possession(
@@ -833,7 +813,7 @@ impl Hacksteader {
     pub async fn spawn_possession(
         db: &DynamoDbClient,
         receiver: String,
-        archetype_handle: ArchetypeHandle
+        archetype_handle: ArchetypeHandle,
     ) -> Result<(), RusotoError<PutItemError>> {
         Hacksteader::give_possession(
             db,
