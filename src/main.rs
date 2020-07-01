@@ -3065,8 +3065,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 let mut clear_plants = vec![];
                 let mut possessions = vec![];
                 let mut new_tiles = vec![];
-                let mut dms: Vec<(String, Vec<Value>)> = Vec::new();
-                let mut market_logs: Vec<Vec<Value>> = Vec::new();
+                let mut dms: Vec<(String, Vec<Value>, String)> = Vec::new();
+                let mut market_logs: Vec<(Vec<Value>, String)> = Vec::new();
 
                 let mut hacksteaders: Vec<Hacksteader> = stream::iter(active_users.clone())
                     .map(|(id, _)| Hacksteader::from_db(&db, id))
@@ -3214,8 +3214,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                             possessions.extend_from_slice(&spawned);
 
                             msg.append(&mut format_yield(spawned, hs.user_id.clone()));
-                            dms.push((hs.user_id.clone(), msg.clone()));
-                            market_logs.push(msg);
+                            dms.push((
+                                hs.user_id.clone(),
+                                msg.clone(),
+                                format!("Your {} hatched!", p.name),
+                            ));
+                            market_logs
+                                .push((msg, format!("{} hatched a {}!", hs.user_id, p.name)));
                         } else {
                             warn!("egg hatch ignored; hack attempt?")
                         }
@@ -3284,6 +3289,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                                             &p.name,
                                                         )),
                                                     ],
+                                                    "What's this, a crafting bonus‽".to_string()
                                                 ));
                                             }
                                             !keep
@@ -3304,6 +3310,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         comment("you don't have enough resources to craft that"),
                                         comment("nice try tho"),
                                     ],
+                                    "You sure you have enough to craft that? Check again..."
+                                        .to_string(),
                                 ));
                             }
                         }
@@ -3535,7 +3543,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         ];
 
                                         msg.append(&mut format_yield(output, tile.steader.clone()));
-                                        dms.push((tile.steader.clone(), msg));
+                                        dms.push((
+                                            tile.steader.clone(),
+                                            msg,
+                                            format!(
+                                                "What's, this, a new {}?",
+                                                recipe.clone().lookup_handles().unwrap().title()
+                                            ),
+                                        ));
 
                                         if recipe.destroys_plant {
                                             clear_plants.push(tile.id.clone());
@@ -3598,7 +3613,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
                                     msg.append(&mut format_yield(yielded, tile.steader.clone()));
 
-                                    dms.push((tile.steader.clone(), msg));
+                                    dms.push((
+                                        tile.steader.clone(),
+                                        msg,
+                                        "FREE STUFF FROM CUTE THING".to_string(),
+                                    ));
 
                                     plant.base_yield_duration.unwrap_or(0.0)
                                 }
@@ -3628,7 +3647,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         }
                                     }),
                                     comment("EXCITING LEVELING UP NOISES"),
-                                ]))
+                                ],
+                                format!(
+                                    "Your {} is now a {}!",
+                                    plant.name,
+                                    advancement.achiever_title
+                                )
+                            ))
                             }
                             let profile_sum =
                                 profile.advancements.sum(profile.xp, std::iter::empty());
@@ -3660,7 +3685,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         }
                                     }),
                                     comment("SUPER EXCITING LEVELING UP NOISES"),
-                                ]));
+                                ],
+                                format!("Your Hackstead is now a {}!", advancement.achiever_title)
+                            ));
                             }
                         }
                     }
@@ -3739,18 +3766,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         .try_for_each_concurrent(None, |(who, _)| { update_user_home_tab(who) }),
                     stream::iter(dms).map(|x| Ok(x)).try_for_each_concurrent(
                         None,
-                        |(who, blocks)| {
-                            dm_blocks(
-                                who.clone(),
-                                "your plant leveled up!".to_string(),
-                                blocks.to_vec(),
-                            )
+                        |(who, blocks, craft_type)| {
+                            dm_blocks(who.clone(), craft_type.clone(), blocks.to_vec())
                         }
                     ),
                     stream::iter(market_logs)
                         .map(|x| Ok(x))
-                        .try_for_each_concurrent(None, |blocks| {
-                            market::log_blocks("Egg Hatch Complete!".to_string(), blocks)
+                        .try_for_each_concurrent(None, |(blocks, notif_type)| {
+                            market::log_blocks(notif_type, blocks)
                         }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
