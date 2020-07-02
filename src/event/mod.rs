@@ -29,10 +29,10 @@ mod prelude {
     pub use crate::{banker, hacksteader, market};
     pub use crate::{FarmingInputEvent, URL};
     pub use config::CONFIG;
+    pub use hacksteader::Hacksteader;
     pub use hcor::config;
     pub use hcor::possess;
     pub use hcor::{Category, Key};
-    pub use hacksteader::Hacksteader;
     pub use possess::{Gotchi, Keepsake, Possessed, Possession, Seed};
     // slack frontend
     pub use crate::{comment, dm_blocks, filify, mrkdwn};
@@ -77,7 +77,11 @@ pub async fn non_challenge_event<'a, 'b>(
 
     let to_farming = (*to_farming).clone();
     rocket::tokio::spawn(async move {
-        let kind_tab_id = (r.kind.as_str(), r.tab.as_ref().map(|x| x.as_str()), &r.user_id);
+        let kind_tab_id = (
+            r.kind.as_str(),
+            r.tab.as_ref().map(|x| x.as_str()),
+            &r.user_id,
+        );
         if let ("app_home_opened", Some("home"), user_id) = kind_tab_id {
             info!("Rendering app_home!");
             to_farming

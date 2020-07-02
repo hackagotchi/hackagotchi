@@ -7,11 +7,12 @@ lazy_static::lazy_static! {
     pub static ref HACKMARKET_LOG_CHAT: String = var("HACKMARKET_LOG_CHAT").unwrap();
 }
 
-pub async fn log_blocks(blocks: Vec<serde_json::Value>) -> Result<(), String> {
+pub async fn log_blocks(notif_msg: String, blocks: Vec<serde_json::Value>) -> Result<(), String> {
     let o = serde_json::json!({
         "channel": *HACKMARKET_LOG_CHAT,
         "token": *super::TOKEN,
-        "blocks": blocks
+        "blocks": blocks,
+        "text": notif_msg
     });
 
     log::debug!("{}", serde_json::to_string_pretty(&o).unwrap());

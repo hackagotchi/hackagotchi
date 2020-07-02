@@ -4,11 +4,11 @@
 #![feature(try_trait)]
 #![recursion_limit = "512"]
 use config::CONFIG;
+use crossbeam_channel::Sender;
 use hcor::config;
 use hcor::frontend::emojify;
 use hcor::possess;
 use hcor::{Category, Key};
-use crossbeam_channel::Sender;
 use log::*;
 use possess::{Possessed, Possession};
 use regex::Regex;
@@ -18,8 +18,8 @@ use rocket::{post, routes, FromForm, State};
 use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
-use std::convert::TryInto;
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 pub mod banker;
 pub mod event;
@@ -30,16 +30,14 @@ mod yank_config;
 use hacksteader::Hacksteader;
 
 pub fn dyn_db() -> DynamoDbClient {
-    DynamoDbClient::new(
-        if *LOCAL_DB {
-            rusoto_core::Region::Custom {
-                name: "local".to_string(),
-                endpoint: "http://localhost:8000".to_string(),
-            }
-        } else {
-            rusoto_core::Region::UsEast1
+    DynamoDbClient::new(if *LOCAL_DB {
+        rusoto_core::Region::Custom {
+            name: "local".to_string(),
+            endpoint: "http://localhost:8000".to_string(),
         }
-    )
+    } else {
+        rusoto_core::Region::UsEast1
+    })
 }
 
 const FARM_CYCLE_SECS: u64 = 5;
@@ -79,11 +77,16 @@ pub fn filify<S: ToString>(txt: S) -> String {
     txt.to_string().to_lowercase().replace(" ", "_")
 }
 
-pub async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String> {
+pub async fn dm_blocks(
+    user_id: String,
+    notif_msg: String,
+    blocks: Vec<Value>,
+) -> Result<(), String> {
     let o = json!({
         "channel": user_id,
         "token": *TOKEN,
-        "blocks": blocks
+        "blocks": blocks,
+        "text": notif_msg
     });
 
     debug!("{}", serde_json::to_string_pretty(&o).unwrap());
@@ -101,8 +104,13 @@ pub async fn dm_blocks(user_id: String, blocks: Vec<Value>) -> Result<(), String
     Ok(())
 }
 
-async fn gift_dm(giver: &str, new_owner: &str, possession: &Possession, count: usize) -> Result<(), String> {
-    dm_blocks(new_owner.to_string(), {
+async fn gift_dm(
+    giver: &str,
+    new_owner: &str,
+    possession: &Possession,
+    count: usize,
+) -> Result<(), String> {
+    dm_blocks(new_owner.to_string(), "You've received a gift!".to_string(), {
         // TODO: with_capacity optimization
         let mut blocks = vec![
             json!({
@@ -141,7 +149,7 @@ fn gotchi_block(
     gotchi: Possessed<possess::Gotchi>,
     interactivity: Interactivity,
     credentials: Credentials,
-    push: bool
+    push: bool,
 ) -> Value {
     json!({
         "type": "section",
@@ -175,8 +183,7 @@ fn inventory_occurences(inventory: Vec<Possession>) -> HashMap<String, Vec<Posse
     let mut o = HashMap::new();
 
     for possession in inventory.into_iter() {
-        o
-            .entry(possession.name.clone())
+        o.entry(possession.name.clone())
             .or_insert(vec![])
             .push(possession)
     }
@@ -264,7 +271,7 @@ fn gotchi_section(
     gotchis: Vec<Possessed<possess::Gotchi>>,
     interactivity: Interactivity,
     credentials: Credentials,
-    push: bool
+    push: bool,
 ) -> Vec<Value> {
     let mut blocks = vec![];
 
@@ -318,7 +325,7 @@ impl PossessionOverviewPage {
             title.push_str("...");
         }
         title
-   }
+    }
 
     async fn modal(self, trigger_id: String, method: &'static str) -> Result<Modal, String> {
         Ok(Modal {
@@ -495,7 +502,7 @@ pub struct PossessionPage {
 
 impl PossessionPage {
     fn title(&self) -> String {
-        let mut title =  self.possession.nickname().to_string();
+        let mut title = self.possession.nickname().to_string();
         if title.len() > 24 {
             title.truncate(24 - 3);
             title.push_str("...");
@@ -591,18 +598,16 @@ impl PossessionPage {
         };
 
         if let Some(g) = possession.kind.gotchi() {
-            blocks.push(actions(
-                "gotchi",
-                &{
-                    let mut a = vec![("Nickname", Some(json!(possession.nickname())))];
-                    if g.hatch_table.is_some() {
-                        a.push(("Hatch", Some(json!(
-                            serde_json::to_string(&possession.id).unwrap()
-                        ))));
-                    }
-                    a
+            blocks.push(actions("gotchi", &{
+                let mut a = vec![("Nickname", Some(json!(possession.nickname())))];
+                if g.hatch_table.is_some() {
+                    a.push((
+                        "Hatch",
+                        Some(json!(serde_json::to_string(&possession.id).unwrap())),
+                    ));
                 }
-            ));
+                a
+            }));
         }
 
         let mut text_fields = vec![
@@ -825,10 +830,7 @@ fn hackstead_blocks(
         if let Some(p) = tile.plant.as_ref() {
             let neighbor_bonuses = neighbor_bonuses
                 .clone()
-                .bonuses_for_plant(
-                    tile.id,
-                    p.archetype_handle
-                );
+                .bonuses_for_plant(tile.id, p.archetype_handle);
             let sum = p.advancements_sum(neighbor_bonuses.iter());
             let unboosted_sum = p.neighborless_advancements_sum(std::iter::empty());
             let ca = p.current_advancement();
@@ -873,7 +875,9 @@ fn hackstead_blocks(
                     "alt_text": format!("A healthy, growing {}!", p.name),
                 }
             }));
-            if let (false, Some(base_yield_duration)) = (sum.yields.is_empty(), p.base_yield_duration) {
+            if let (false, Some(base_yield_duration)) =
+                (sum.yields.is_empty(), p.base_yield_duration)
+            {
                 blocks.push(json!({
                     "type": "section",
                     "text": mrkdwn(format!(
@@ -933,24 +937,17 @@ fn hackstead_blocks(
                 let ca = p.current_advancement();
                 let mut actions = vec![];
 
-                let applicables: Vec<String> = inventory
-                    .iter()
-                    .cloned()
-                    .filter_map(|x| {
-                        x
-                            .kind
-                            .keepsake()?
-                            .item_application
-                            .as_ref()
-                            .filter(|a| {
-                                a
-                                    .effects
-                                    .iter()
-                                    .any(|e| e.keep_plants.allows(&p.name))
+                let applicables: Vec<String> =
+                    inventory
+                        .iter()
+                        .cloned()
+                        .filter_map(|x| {
+                            x.kind.keepsake()?.item_application.as_ref().filter(|a| {
+                                a.effects.iter().any(|e| e.keep_plants.allows(&p.name))
                             })?;
-                        Some(x.id.to_simple().to_string())
-                    })
-                    .collect();
+                            Some(x.id.to_simple().to_string())
+                        })
+                        .collect();
 
                 if !applicables.is_empty() && interactivity.write() {
                     actions.push(json!({
@@ -1051,19 +1048,19 @@ fn hackstead_blocks(
     }
 
     //if bottom_inventory {
-        blocks.push(json!({ "type": "divider" }));
+    blocks.push(json!({ "type": "divider" }));
 
-        if inv_occurrences.is_empty() {
-            blocks.push(comment("Your inventory is empty"));
-        } else {
-            blocks.append(&mut inventory_section(
-                inv_occurrences,
-                interactivity,
-                credentials,
-                false,
-                user_id.clone(),
-            ));
-        }
+    if inv_occurrences.is_empty() {
+        blocks.push(comment("Your inventory is empty"));
+    } else {
+        blocks.append(&mut inventory_section(
+            inv_occurrences,
+            interactivity,
+            credentials,
+            false,
+            user_id.clone(),
+        ));
+    }
     //}
 
     //if bottom_gotchi && gotchis.len() > 0 {
@@ -1074,7 +1071,7 @@ fn hackstead_blocks(
             gotchis,
             interactivity,
             credentials,
-            false
+            false,
         ));
     }
 
@@ -1430,32 +1427,37 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         Some(s) => s.as_str().to_string(),
         None => return res("Couldn't parse receiver?"),
     };
-    let amount = c.get(2).and_then(|x| x.as_str().trim().parse().ok()).unwrap_or(1);
+    let amount = c
+        .get(2)
+        .and_then(|x| x.as_str().trim().parse().ok())
+        .unwrap_or(1);
     let possession_name = match c.get(3) {
         Some(a) => a.as_str().replace("_", " ").to_lowercase(),
         None => return res("Couldn't parse possession name?"),
     };
     let (archetype_handle, possession_archetype) = match CONFIG
-            .possession_archetypes
-            .iter()
-            .enumerate()
-            .find(|(_, x)| x.name.to_lowercase() == possession_name)
+        .possession_archetypes
+        .iter()
+        .enumerate()
+        .find(|(_, x)| x.name.to_lowercase() == possession_name)
     {
         Some(ah) => ah,
-        None => return res(format!("no possession by name of {}", possession_name))
+        None => return res(format!("no possession by name of {}", possession_name)),
     };
 
     let user = slash_command.user_id.to_string();
     let hs = match Hacksteader::from_db(&dyn_db(), user.clone()).await {
         Ok(hs) => hs,
-        Err(_) => return res(format!(
-            concat!(
-                "Can't give {}; ",
-                "you don't have a hackstead! ",
-                "try /hstead to get started!"
-            ),
-            slash_command.text
-        ))
+        Err(_) => {
+            return res(format!(
+                concat!(
+                    "Can't give {}; ",
+                    "you don't have a hackstead! ",
+                    "try /hstead to get started!"
+                ),
+                slash_command.text
+            ))
+        }
     };
 
     let possessions = hs
@@ -1470,11 +1472,9 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
             0 => res(format!("You don't have any {}", possession_name)),
             more => res(format!(
                 "You only have {} {}, not {}!",
-                more,
-                possession_name,
-                amount
-            ))
-        }
+                more, possession_name, amount
+            )),
+        };
     } else if amount == 0 {
         res("Well, I mean ... that's not really anything but ... ok")
     } else {
@@ -1508,14 +1508,9 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         tokio::spawn(async move {
             info!("I mean this happens?");
 
-            let _ = gift_dm(
-                &user,
-                &receiver,
-                possessions.first().unwrap(),
-                amount
-            )
-            .await
-            .map_err(|e| error!("{}", e));
+            let _ = gift_dm(&user, &receiver, possessions.first().unwrap(), amount)
+                .await
+                .map_err(|e| error!("{}", e));
 
             for possession in possessions {
                 match Hacksteader::transfer_possession(
@@ -1523,10 +1518,12 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
                     receiver.clone(),
                     possess::Acquisition::Trade,
                     Key::misc(possession.id),
-                ).await {
+                )
+                .await
+                {
                     Err(e) => {
                         let _ = banker::message(e).await.map_err(|e| error!("{}", e));
-                    },
+                    }
                     Ok(_) => {}
                 }
             }
@@ -1547,7 +1544,7 @@ async fn egghatchwhen<'a>(
     if text != "" {
         return Json(json!({
             "response_type": "ephemeral",
-        }))
+        }));
     }
 
     fn res<S: std::string::ToString>(s: S) -> Json<Value> {
@@ -1563,11 +1560,13 @@ async fn egghatchwhen<'a>(
     let user = user_id.to_string();
     let hs = match Hacksteader::from_db(&dyn_db(), user.clone()).await {
         Ok(hs) => hs,
-        Err(_) => return res(concat!(
-            "Can't open one of your eggs; ",
-            "you don't have a hackstead! ",
-            "try /hstead to get started!"
-        ))
+        Err(_) => {
+            return res(concat!(
+                "Can't open one of your eggs; ",
+                "you don't have a hackstead! ",
+                "try /hstead to get started!"
+            ))
+        }
     };
 
     let egg_search = hs
@@ -1975,6 +1974,9 @@ async fn action_endpoint(
                 update_user_home_tab(user.id.clone()).await?;
 
                 let possession = hacksteader::get_possession(&dyn_db(), key).await?;
+                let notif_msg =
+                    format!("<@{}> has gifted you a {}!", user.id, possession.nickname())
+                        .to_string();
 
                 // DM the new_owner about their new acquisition!
                 gift_dm(&user.id, new_owner, &possession, 1).await?;
@@ -1993,10 +1995,14 @@ async fn action_endpoint(
 
                     let (tile_id, recipe_archetype_handle): (uuid::Uuid, config::ArchetypeHandle) =
                         serde_json::from_str(&view.private_metadata)
-                        .map_err(|e| error!("{}", e)).unwrap();
+                            .map_err(|e| error!("{}", e))
+                            .unwrap();
 
                     to_farming
-                        .send(FarmingInputEvent::BeginCraft { tile_id, recipe_archetype_handle })
+                        .send(FarmingInputEvent::BeginCraft {
+                            tile_id,
+                            recipe_archetype_handle,
+                        })
                         .expect("couldn't send to farming");
 
                     return Ok(ActionResponse::Json(Json(json!({
@@ -2063,9 +2069,9 @@ async fn action_endpoint(
                     .send(FarmingInputEvent::ApplyItem(
                         ItemApplication {
                             tile: tile_id,
-                            item: item_id
+                            item: item_id,
                         },
-                        user.id.clone()
+                        user.id.clone(),
                     ))
                     .unwrap();
 
@@ -2279,8 +2285,12 @@ async fn action_endpoint(
             .await?
         }
         "gotchi_overview" => {
-            let (steader, interactivity, credentials, push):
-                (String, Interactivity, Credentials, bool) = serde_json::from_str(&action.value).unwrap();
+            let (steader, interactivity, credentials, push): (
+                String,
+                Interactivity,
+                Credentials,
+                bool,
+            ) = serde_json::from_str(&action.value).unwrap();
 
             let hs = Hacksteader::from_db(&dyn_db(), steader).await?;
 
@@ -2303,8 +2313,12 @@ async fn action_endpoint(
             .await?
         }
         "inventory_overview" => {
-            let (steader, interactivity, credentials, push):
-                (String, Interactivity, Credentials, bool) = serde_json::from_str(&action.value).unwrap();
+            let (steader, interactivity, credentials, push): (
+                String,
+                Interactivity,
+                Credentials,
+                bool,
+            ) = serde_json::from_str(&action.value).unwrap();
 
             let hs = Hacksteader::from_db(&dyn_db(), steader.clone()).await?;
 
@@ -2314,7 +2328,7 @@ async fn action_endpoint(
                 interactivity,
                 credentials,
                 true,
-                steader.clone()
+                steader.clone(),
             );
 
             Modal {
@@ -2355,20 +2369,14 @@ async fn action_endpoint(
                     e
                 })?;
 
-            let neighbor_bonuses = all_nb
-                .bonuses_for_plant(
-                    plant_id,
-                    plant.archetype_handle
-                );
+            let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
             let sum = plant.advancements_sum(neighbor_bonuses.iter());
 
             let recipe = plant.get_recipe(recipe_index).ok_or_else(|| {
                 let e = format!(
                     "can't craft unknown recipe: {} on {:?} {}xp",
-                    recipe_index,
-                    plant.name,
-                    plant.xp
+                    recipe_index, plant.name, plant.xp
                 );
                 error!("{}", e);
                 e
@@ -2431,7 +2439,8 @@ async fn action_endpoint(
         "crafting" => {
             info!("crafting confirmation window");
 
-            let (plant_id, steader): (uuid::Uuid, String) = serde_json::from_str(&action.value).unwrap();
+            let (plant_id, steader): (uuid::Uuid, String) =
+                serde_json::from_str(&action.value).unwrap();
             let hs = Hacksteader::from_db(&dyn_db(), i.user.id.to_string()).await?;
             let plant = hs
                 .land
@@ -2439,11 +2448,7 @@ async fn action_endpoint(
                 .find_map(|tile| tile.plant.as_ref().filter(|_p| tile.id == plant_id))
                 .ok_or_else(|| format!("no such plant!"))?;
             let all_nb = hs.neighbor_bonuses();
-            let neighbor_bonuses = all_nb
-                .bonuses_for_plant(
-                    plant_id,
-                    plant.archetype_handle
-                );
+            let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
             let recipes = plant.advancements_sum(neighbor_bonuses.iter()).recipes;
             let unlocked_recipes = recipes.len();
@@ -2524,12 +2529,12 @@ async fn action_endpoint(
 
                     b
                 })
-                .chain(
-                    max_recipes
-                        .into_iter()
-                        .skip(unlocked_recipes)
-                        .map(|r| comment(format!("*Level up to unlock:* {}", r.lookup_handles().unwrap().title())))
-                )
+                .chain(max_recipes.into_iter().skip(unlocked_recipes).map(|r| {
+                    comment(format!(
+                        "*Level up to unlock:* {}",
+                        r.lookup_handles().unwrap().title()
+                    ))
+                }))
                 .collect();
 
             Modal {
@@ -2598,11 +2603,7 @@ async fn action_endpoint(
                 .find_map(|tile| tile.plant.as_ref().filter(|_p| tile.id == plant_id))
                 .ok_or_else(|| format!("no such plant!"))?;
             let all_nb = hs.neighbor_bonuses();
-            let neighbor_bonuses = all_nb
-                .bonuses_for_plant(
-                    plant_id,
-                    plant.archetype_handle
-                );
+            let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
             let advancements = plant
                 .unlocked_advancements(neighbor_bonuses.iter())
@@ -2613,7 +2614,9 @@ async fn action_endpoint(
                 .chain(neighbor_bonuses.iter())
                 .collect::<Vec<_>>();
             let sum = plant.advancements_sum(neighbor_bonuses.iter());
-            let yield_farm_cycles = plant.base_yield_duration.map(|x| x / sum.yield_speed_multiplier);
+            let yield_farm_cycles = plant
+                .base_yield_duration
+                .map(|x| x / sum.yield_speed_multiplier);
 
             let mut blocks = vec![];
 
@@ -2719,17 +2722,20 @@ async fn action_endpoint(
         "item_apply" => {
             use possess::Keepsake;
 
-            let (tile_id, user_id): (uuid::Uuid, String) =
-                serde_json::from_str(&action.value).map_err(|e| {
+            let (tile_id, user_id): (uuid::Uuid, String) = serde_json::from_str(&action.value)
+                .map_err(|e| {
                     let a = format!("couldn't parse action value: {}", e);
                     error!("{}", a);
                     a
                 })?;
             let db = dyn_db();
 
-            let Hacksteader { inventory, land,  .. } = Hacksteader::from_db(&db, user_id)
-                .await
-                .map_err(|e| { error!("{}", e); e })?;
+            let Hacksteader {
+                inventory, land, ..
+            } = Hacksteader::from_db(&db, user_id).await.map_err(|e| {
+                error!("{}", e);
+                e
+            })?;
             let plant = land
                 .into_iter()
                 .find(|t| t.id == tile_id)
@@ -2743,8 +2749,7 @@ async fn action_endpoint(
                 .into_iter()
                 .filter_map(|x| x.try_into().ok())
                 .filter(|x: &Possessed<Keepsake>| {
-                    x
-                        .inner
+                    x.inner
                         .item_application
                         .as_ref()
                         .map(|item_appl| {
@@ -2800,7 +2805,7 @@ async fn action_endpoint(
             to_farming
                 .send(FarmingInputEvent::HatchEgg(
                     serde_json::from_str(&dbg!(action.value)).unwrap(),
-                    i.user.id.clone()
+                    i.user.id.clone(),
                 ))
                 .unwrap();
 
@@ -2911,28 +2916,30 @@ pub fn format_yield(items: Vec<Possession>, user: String) -> Vec<Value> {
     if items.len() < 8 {
         items
             .iter()
-            .map(|p| json!({
-                "type": "section",
-                "text": mrkdwn(format!(
-                    "*<@{}>'s new* {} _{}_!",
-                    user,
-                    emojify(&p.name),
-                    p.name,
-                )),
-                "accessory": {
-                    "type": "image",
-                    "image_url": format!(
-                        "http://{}/gotchi/img/{}/{}.png",
-                        *URL,
-                        format!(
-                            "{:?}",
-                            p.kind.category()
-                        ).to_lowercase(),
-                        filify(&p.name)
-                    ),
-                    "alt_text": "happy shiny give u stuffs",
-                }
-            }))
+            .map(|p| {
+                json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        "*<@{}>'s new* {} _{}_!",
+                        user,
+                        emojify(&p.name),
+                        p.name,
+                    )),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!(
+                            "http://{}/gotchi/img/{}/{}.png",
+                            *URL,
+                            format!(
+                                "{:?}",
+                                p.kind.category()
+                            ).to_lowercase(),
+                            filify(&p.name)
+                        ),
+                        "alt_text": "happy shiny give u stuffs",
+                    }
+                })
+            })
             .collect::<Vec<_>>()
     } else {
         let mut occurrences: HashMap<_, usize> = Default::default();
@@ -2941,34 +2948,35 @@ pub fn format_yield(items: Vec<Possession>, user: String) -> Vec<Value> {
             *occurrences
                 .entry((
                     p.name.clone(),
-                    format!("{:?}", p.kind.category())
-                        .to_lowercase()
+                    format!("{:?}", p.kind.category()).to_lowercase(),
                 ))
                 .or_insert(0) += 1;
         }
 
         occurrences
             .iter()
-            .map(|((name, category), count)| json!({
-                "type": "section",
-                "text": mrkdwn(format!(
-                    "_<@{}>'s_ *{}* new {} _{}_!",
-                    user,
-                    count,
-                    emojify(&name),
-                    name
-                )),
-                "accessory": {
-                    "type": "image",
-                    "image_url": format!(
-                        "http://{}/gotchi/img/{}/{}.png",
-                        *URL,
-                        category,
-                        filify(&name)
-                    ),
-                    "alt_text": "happy shiny egg give u stuffs",
-                }
-            }))
+            .map(|((name, category), count)| {
+                json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        "_<@{}>'s_ *{}* new {} _{}_!",
+                        user,
+                        count,
+                        emojify(&name),
+                        name
+                    )),
+                    "accessory": {
+                        "type": "image",
+                        "image_url": format!(
+                            "http://{}/gotchi/img/{}/{}.png",
+                            *URL,
+                            category,
+                            filify(&name)
+                        ),
+                        "alt_text": "happy shiny egg give u stuffs",
+                    }
+                })
+            })
             .collect::<Vec<_>>()
     }
 }
@@ -3004,9 +3012,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         let mut hatch_egg_queue: HashMap<String, uuid::Uuid> = HashMap::new();
 
         async move {
-            use hcor::Profile;
             use futures::stream::{self, StreamExt, TryStreamExt};
             use hacksteader::{Plant, Tile};
+            use hcor::Profile;
 
             loop {
                 for (_, fresh) in active_users.iter_mut() {
@@ -3032,7 +3040,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         HatchEgg(egg_id, user_id) => {
                             hatch_egg_queue.insert(user_id, egg_id);
                         }
-                        BeginCraft { tile_id, recipe_archetype_handle } => {
+                        BeginCraft {
+                            tile_id,
+                            recipe_archetype_handle,
+                        } => {
                             craft_queue.insert(tile_id, recipe_archetype_handle);
                         }
                     }
@@ -3073,13 +3084,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
                 // Give away requested land/hatch eggs
                 for hs in hacksteaders.iter_mut() {
-                    if let Some((plant, appl, item)) = item_application_queue
-                        .remove(&hs.user_id)
-                        .and_then(|appl| {
+                    if let Some((plant, appl, item)) =
+                        item_application_queue.remove(&hs.user_id).and_then(|appl| {
                             let i = hs.inventory.iter().find(|i| i.id == appl.item)?;
 
                             Some((
-                                hs.land.iter_mut().find(|t| t.id == appl.tile)?.plant.as_mut()?,
+                                hs.land
+                                    .iter_mut()
+                                    .find(|t| t.id == appl.tile)?
+                                    .plant
+                                    .as_mut()?,
                                 i.kind.keepsake()?.item_application.as_ref()?,
                                 i,
                             ))
@@ -3089,21 +3103,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         for (i, e) in appl.effects.iter().enumerate() {
                             match &e.kind {
                                 config::ItemApplicationEffectKind::TurnsPlantInto(name) => {
-                                    plant.archetype_handle = CONFIG
-                                        .find_plant_handle(name)
-                                        .expect("invalid handle");
+                                    plant.archetype_handle =
+                                        CONFIG.find_plant_handle(name).expect("invalid handle");
 
                                     for (i, e) in plant
                                         .effects
                                         .clone()
                                         .iter()
-                                        .filter_map(|e| CONFIG.get_item_application_effect(
-                                            e.item_archetype_handle,
-                                            e.effect_archetype_handle
-                                        ))
+                                        .filter_map(|e| {
+                                            CONFIG.get_item_application_effect(
+                                                e.item_archetype_handle,
+                                                e.effect_archetype_handle,
+                                            )
+                                        })
                                         .enumerate()
                                     {
-                                        if !e.keep_plants.lookup_handles().unwrap().allows(&plant.archetype_handle) {
+                                        if !e
+                                            .keep_plants
+                                            .lookup_handles()
+                                            .unwrap()
+                                            .allows(&plant.archetype_handle)
+                                        {
                                             plant.effects.swap_remove(i);
                                         }
                                     }
@@ -3111,13 +3131,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 _ => {}
                             }
 
-                            plant.effects.push(
-                                hacksteader::Effect {
-                                    until_finish: e.duration,
-                                    item_archetype_handle: item.archetype_handle,
-                                    effect_archetype_handle: i,
-                                }
-                            );
+                            plant.effects.push(hacksteader::Effect {
+                                until_finish: e.duration,
+                                item_archetype_handle: item.archetype_handle,
+                                effect_archetype_handle: i,
+                            });
                         }
                     }
                     if let Some(cert_id) = land_cert_queue.remove(&hs.user_id) {
@@ -3141,26 +3159,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         info!("egg hatch requested!");
 
                         if let Some((p, hatch_table)) = hs.gotchis.iter().find_map(|g| {
-                            Some(g)
-                                .filter(|g| g.id == egg_id)
-                                .and_then(|g| {
-                                    info!("hatching {:?}", g);
-                                    Some((g, g.inner.hatch_table.as_ref()?))
-                                })
+                            Some(g).filter(|g| g.id == egg_id).and_then(|g| {
+                                info!("hatching {:?}", g);
+                                Some((g, g.inner.hatch_table.as_ref()?))
+                            })
                         }) {
                             deletions.push(Key::gotchi(egg_id));
 
-                            let (spawn_handles, percentile) = config::spawn_with_percentile(
-                                    hatch_table,
-                                    &mut rand::thread_rng()
-                                );
+                            let (spawn_handles, percentile) =
+                                config::spawn_with_percentile(hatch_table, &mut rand::thread_rng());
 
                             let spawned: Vec<Possession> = spawn_handles
                                 .into_iter()
-                                .map(|h| Possession::new(
-                                    CONFIG.find_possession_handle(&h).unwrap(),
-                                    possess::Owner::hatcher(hs.user_id.clone())
-                                ))
+                                .map(|h| {
+                                    Possession::new(
+                                        CONFIG.find_possession_handle(&h).unwrap(),
+                                        possess::Owner::hatcher(hs.user_id.clone()),
+                                    )
+                                })
                                 .collect();
 
                             let mut msg = vec![
@@ -3191,7 +3207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                     }
                                 }),
                                 comment("WAT I TAUGHT ET WAZ ROCC!?!?!!"),
-                                json!({ "type": "divider" })
+                                json!({ "type": "divider" }),
                             ];
 
                             possessions.extend_from_slice(&spawned);
@@ -3209,24 +3225,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 for hs in hacksteaders.iter_mut() {
                     let nb = hs.neighbor_bonuses();
                     let Hacksteader {
-                        inventory,
-                        land,
-                        ..
+                        inventory, land, ..
                     } = hs;
 
                     let mut land_iter = land.iter_mut();
-                    while let Some(Tile { plant: Some(ref mut plant), steader, id, .. }) = land_iter.next() {
-
-                        let config::PlantAdvancementSum { recipes, craft_return_chance, .. } = plant
-                            .advancements_sum(
-                                nb
-                                    .clone()
-                                    .bonuses_for_plant(
-                                        *id,
-                                        plant.archetype_handle,
-                                    )
-                                    .iter(),
-                            );
+                    while let Some(Tile {
+                        plant: Some(ref mut plant),
+                        steader,
+                        id,
+                        ..
+                    }) = land_iter.next()
+                    {
+                        let config::PlantAdvancementSum {
+                            recipes,
+                            craft_return_chance,
+                            ..
+                        } = plant.advancements_sum(
+                            nb.clone()
+                                .bonuses_for_plant(*id, plant.archetype_handle)
+                                .iter(),
+                        );
 
                         if let Some((recipe_archetype_handle, recipe)) = craft_queue
                             .remove(&id)
@@ -3406,7 +3424,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                             *tokens = *tokens - 1;
                             if *tokens == 0 {
                                 info!("all plants finished for {}", profile.id);
-                                
                                 // we don't want to add the boosted_elapsed here, then your item effects
                                 // would have to be "paid for" later (your farm wouldn't work for however
                                 // much time the effect gave you).
@@ -3425,13 +3442,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                     }
 
-                    info!(
-                        "elapsing {} cycles for {}",
-                        elapsed, profile.id
-                    );
+                    info!("elapsing {} cycles for {}", elapsed, profile.id);
 
                     for _ in 0..elapsed {
-
                         plant.effects = plant
                             .effects
                             .iter_mut()
@@ -3457,7 +3470,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         let mut rng = rand::thread_rng();
                         info!("triggering {} ticks for {}'s cycle", ticks, profile.id);
                         for _ in 0..ticks {
-                            plant.craft = match plant.current_recipe_raw().and_then(|r| Some((r, plant.craft.take()?))) {
+                            plant.craft = match plant
+                                .current_recipe_raw()
+                                .and_then(|r| Some((r, plant.craft.take()?)))
+                            {
                                 Some((recipe, mut craft)) => {
                                     if craft.until_finish > plant_sum.crafting_speed_multiplier {
                                         craft.until_finish -= plant_sum.crafting_speed_multiplier;
@@ -3474,18 +3490,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                             .clone()
                                             .output()
                                             .into_iter()
-                                            .map(|ah| Possession::new(
-                                                ah,
-                                                possess::Owner::crafter(tile.steader.clone()),
-                                            ))
+                                            .map(|ah| {
+                                                Possession::new(
+                                                    ah,
+                                                    possess::Owner::crafter(tile.steader.clone()),
+                                                )
+                                            })
                                             .collect();
 
-                                        if rng.gen_range(0.0, 1.0) < plant_sum.double_craft_yield_chance {
+                                        if rng.gen_range(0.0, 1.0)
+                                            < plant_sum.double_craft_yield_chance
+                                        {
                                             info!("cloning recipe output! {:?}", output);
                                             output.append(&mut output.clone());
                                             info!("after clone: {:?}", output);
                                         }
-                                        
                                         possessions.extend_from_slice(&output);
 
                                         let mut msg = vec![
@@ -3533,9 +3552,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 n if n > 0.0 => n,
                                 _ if plant.base_yield_duration.is_some() => {
                                     let owner = &tile.steader;
-                                    let (yielded, xp_bonuses): (Vec<_>, Vec<_>) = config::spawn(&plant_sum.yields, &mut rand::thread_rng())
-                                        .map(|(ah, xp)| (Possession::new(ah, possess::Owner::farmer(owner.clone())), xp))
-                                        .unzip();
+                                    let (yielded, xp_bonuses): (Vec<_>, Vec<_>) =
+                                        config::spawn(&plant_sum.yields, &mut rand::thread_rng())
+                                            .map(|(ah, xp)| {
+                                                (
+                                                    Possession::new(
+                                                        ah,
+                                                        possess::Owner::farmer(owner.clone()),
+                                                    ),
+                                                    xp,
+                                                )
+                                            })
+                                            .unzip();
                                     let earned_xp = xp_bonuses.into_iter().sum::<usize>() as u64;
 
                                     plant.queued_xp_bonus += earned_xp;
@@ -3562,7 +3590,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                             }
                                         }),
                                         comment("FREE STUFF FROM CUTE THING"),
-                                        json!({ "type": "divider" })
+                                        json!({ "type": "divider" }),
                                     ];
 
                                     possessions.extend_from_slice(&yielded);
@@ -3573,7 +3601,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
                                     plant.base_yield_duration.unwrap_or(0.0)
                                 }
-                                n => n
+                                n => n,
                             };
 
                             if let Some(advancement) = plant.increase_xp(plant_sum.xp_multiplier) {
@@ -3601,8 +3629,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                     comment("EXCITING LEVELING UP NOISES"),
                                 ]))
                             }
-                            let profile_sum = profile.advancements.sum(profile.xp, std::iter::empty());
-                            if let Some(advancement) = profile.increase_xp(plant_sum.xp_multiplier) {
+                            let profile_sum =
+                                profile.advancements.sum(profile.xp, std::iter::empty());
+                            if let Some(advancement) = profile.increase_xp(plant_sum.xp_multiplier)
+                            {
                                 dms.push((tile.steader.clone(), vec![
                                     json!({
                                         "type": "section",
@@ -3706,15 +3736,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     stream::iter(profiles.clone())
                         .map(|x| Ok(x))
                         .try_for_each_concurrent(None, |(who, _)| { update_user_home_tab(who) }),
-                    stream::iter(dms)
-                        .map(|x| Ok(x))
-                        .try_for_each_concurrent(None, |(who, blocks)| {
-                            dm_blocks(who.clone(), blocks.to_vec())
-                        }),
+                    stream::iter(dms).map(|x| Ok(x)).try_for_each_concurrent(
+                        None,
+                        |(who, blocks)| {
+                            dm_blocks(
+                                who.clone(),
+                                "your plant leveled up!".to_string(),
+                                blocks.to_vec(),
+                            )
+                        }
+                    ),
                     stream::iter(market_logs)
                         .map(|x| Ok(x))
                         .try_for_each_concurrent(None, |blocks| {
-                            market::log_blocks(blocks)
+                            market::log_blocks("Egg Hatch Complete!".to_string(), blocks)
                         }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
