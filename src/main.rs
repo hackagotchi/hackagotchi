@@ -3219,7 +3219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                 format!("Your {} hatched!", p.name),
                             ));
                             market_logs
-                                .push((msg, format!("{} hatched a {}!", hs.user_id, p.name)));
+                                .push((msg, format!("<@{}> hatched a {}!", hs.user_id, p.name)));
                         } else {
                             warn!("egg hatch ignored; hack attempt?")
                         }
@@ -3546,7 +3546,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                             tile.steader.clone(),
                                             msg,
                                             format!(
-                                                "What's, this, a new {}?",
+                                                "What's this, a new {}?",
                                                 recipe.clone().lookup_handles().unwrap().title()
                                             ),
                                         ));

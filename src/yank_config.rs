@@ -336,7 +336,7 @@ fn sheet_to_advancement() {
                 description: "Desc".to_string(),
                 achiever_title: "A_Title".to_string(),
                 art: "Art".to_string(),
-                kind: PlantAdvancementKind::YieldSize(1.1),
+                kind: PlantAdvancementKind::YieldSizeMultiplier(1.1),
             }
     );
 
@@ -352,7 +352,7 @@ fn sheet_to_advancement() {
             description: "Desc2".to_string(),
             achiever_title: "A_Title2".to_string(),
             art: "Art2".to_string(),
-            kind: PlantAdvancementKind::YieldSpeed(2.2),
+            kind: PlantAdvancementKind::YieldSpeedMultiplier(2.2),
         }
     );
 }

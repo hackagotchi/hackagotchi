@@ -38,7 +38,7 @@ fn spawn_command<'a>(
 
         market::log_blocks(
             format!(
-                "{} spawned {} {} for {}!",
+                "<@{}> spawned {} {} for <@{}>!",
                 &r.user_id,
                 if amount == 1 {
                     "a".to_string()
