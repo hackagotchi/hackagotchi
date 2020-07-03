@@ -1,0 +1,23 @@
+image: archlinux
+packages:
+  - rustup
+sources:
+  - https://github.com/hackagotchi/hackagotchi.git
+  - https://github.com/hackagotchi/hcor.git
+
+tasks:
+  - setup-rust: |
+      rustup toolchain install stable nightly
+      cd hcor/
+      rustup run stable cargo fetch
+      cd ..
+      cd hackagotchi/
+      rustup run nightly cargo fetch
+  - stable: |
+      cd hackagotchi/
+      rustup override set nightly
+      cargo build
+      cargo test
+  - fmt: |
+      cd hackagotchi/
+      cargo fmt -- --check 
