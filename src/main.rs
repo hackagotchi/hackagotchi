@@ -1500,7 +1500,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
                         "alt_text": "hackagotchi img",
                     }
                 },
-                comment("EY BRO TAEK DIS N DONT TELL MOM, OwO")
+                comment("TAKE THIS AND DONT TELL MOM")
             ],
             "response_type": "in_channel",
         });
@@ -2220,7 +2220,6 @@ async fn action_endpoint(
                 .iter()
                 .cloned()
                 .filter_map(|p| p.try_into().ok())
-                .take(40)
                 .collect();
 
             Modal {
@@ -3207,7 +3206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         "alt_text": "happy shiny egg give u stuffs",
                                     }
                                 }),
-                                comment("WAT I TAUGHT ET WAZ ROCC!?!?!!"),
+                                comment("WAT I THOUGHT IT WAS ROCK"),
                                 json!({ "type": "divider" }),
                             ];
 
