@@ -111,12 +111,15 @@ fn hackmarket_fees<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to sell for {}gp is no longer on the market, ",
-                                "so your {}gp market fee has been refunded."
+                                "The {} you tried to sell for {}gp is no longer on the market{}"
                             ),
                             name,
                             price,
-                            price / 20
+                            if price >= 20 {
+                                format!("so your {}gp market fee has been refunded.", price/20)
+                            } else {
+                                ".".to_string()
+                            }
                         ))
                     })]
                 )
