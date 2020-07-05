@@ -116,7 +116,7 @@ fn hackmarket_fees<'a>(
                             name,
                             price,
                             if price >= 20 {
-                                format!("so your {}gp market fee has been refunded.", price/20)
+                                format!(", so your {}gp market fee has been refunded.", price/20)
                             } else {
                                 ".".to_string()
                             }
