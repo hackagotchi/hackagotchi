@@ -111,7 +111,7 @@ async fn gift_dm(
     notif_msg: String,
     count: usize,
 ) -> Result<(), String> {
-    dm_blocks(new_owner.to_string(), notif_msg.to_string(), {
+    dm_blocks(new_owner.to_string(), notif_msg, {
         // TODO: with_capacity optimization
         let mut blocks = vec![
             json!({
