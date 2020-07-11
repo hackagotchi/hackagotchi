@@ -1428,14 +1428,10 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         None => return res("Couldn't parse receiver?"),
     };
     if &receiver == &slash_command.user_id {
-             return res(format!(
-                concat!(
-                    "Can't give {}; ",
-                    "you can't give stuff to yourself! ",
-                ),
-                slash_command.text
-            ))
-
+        return res(format!(
+            concat!("Can't give {}; ", "you can't give stuff to yourself! ",),
+            slash_command.text
+        ));
     }
 
     let amount = c
