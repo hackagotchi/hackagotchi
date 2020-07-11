@@ -108,9 +108,10 @@ async fn gift_dm(
     giver: &str,
     new_owner: &str,
     possession: &Possession,
+    notif_msg: String,
     count: usize,
 ) -> Result<(), String> {
-    dm_blocks(new_owner.to_string(), "You've received a gift!".to_string(), {
+    dm_blocks(new_owner.to_string(), notif_msg, {
         // TODO: with_capacity optimization
         let mut blocks = vec![
             json!({
@@ -1427,6 +1428,13 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         Some(s) => s.as_str().to_string(),
         None => return res("Couldn't parse receiver?"),
     };
+    if &receiver == &slash_command.user_id {
+        return res(format!(
+            concat!("Can't give {}; ", "you can't give stuff to yourself! ",),
+            slash_command.text
+        ));
+    }
+
     let amount = c
         .get(2)
         .and_then(|x| x.as_str().trim().parse().ok())
@@ -1504,13 +1512,23 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
             ],
             "response_type": "in_channel",
         });
+        let notif_msg = format!(
+            "<@{}> sent you {} {}!",
+            user, amount, possession_archetype.name
+        );
 
         tokio::spawn(async move {
             info!("I mean this happens?");
 
-            let _ = gift_dm(&user, &receiver, possessions.first().unwrap(), amount)
-                .await
-                .map_err(|e| error!("{}", e));
+            let _ = gift_dm(
+                &user,
+                &receiver,
+                possessions.first().unwrap(),
+                notif_msg,
+                amount,
+            )
+            .await
+            .map_err(|e| error!("{}", e));
 
             for possession in possessions {
                 match Hacksteader::transfer_possession(
@@ -1982,11 +2000,10 @@ async fn action_endpoint(
 
                 let possession = hacksteader::get_possession(&dyn_db(), key).await?;
                 let notif_msg =
-                    format!("<@{}> has gifted you a {}!", user.id, possession.nickname())
-                        .to_string();
+                    format!("<@{}> has gifted you a {}!", user.id, possession.nickname());
 
                 // DM the new_owner about their new acquisition!
-                gift_dm(&user.id, new_owner, &possession, 1).await?;
+                gift_dm(&user.id, new_owner, &possession, notif_msg, 1).await?;
 
                 // close ALL THE MODALS!!!
                 return Ok(ActionResponse::Json(Json(json!({
