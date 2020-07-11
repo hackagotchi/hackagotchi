@@ -2474,7 +2474,11 @@ async fn action_endpoint(
             let recipe_page_count = {
                 let l = unlocked_recipes.chunks(RECIPE_PAGE_SIZE).count();
 
-                if extra_page { l + 1 } else { l }
+                if extra_page {
+                    l + 1
+                } else {
+                    l
+                }
             };
             let last_page = recipe_page_count == (page + 1);
             let first_page = page == 0;
@@ -2482,7 +2486,7 @@ async fn action_endpoint(
 
             let this_page_unlocked_recipes = recipe_pages.next();
             let make_unlocked_recipe_blocks = |(recipe_handle, raw_recipe): (_, Recipe<usize>)| {
-                 use hcor::config::Archetype;
+                use hcor::config::Archetype;
 
                 let possible = raw_recipe.satisfies(&hs.inventory);
                 let recipe = raw_recipe
@@ -2561,13 +2565,14 @@ async fn action_endpoint(
                     .flat_map(make_unlocked_recipe_blocks)
                     .collect(),
                 None => locked_recipes
-                    .map(|raw_recipe| comment(format!(
-                        "*Level up to unlock:* {}",
-                        raw_recipe.clone().lookup_handles().unwrap().title()
-                    )))
+                    .map(|raw_recipe| {
+                        comment(format!(
+                            "*Level up to unlock:* {}",
+                            raw_recipe.clone().lookup_handles().unwrap().title()
+                        ))
+                    })
                     .collect(),
             };
-
 
             if !last_page || !first_page {
                 let mut elements = vec![];
@@ -2590,19 +2595,19 @@ async fn action_endpoint(
                 });
                 elements.push(if !last_page {
                     json!({
-                        "style": "primary",
-                        "type": "button",
-                        "value": serde_json::to_string(&(plant_id, &steader, page + 1)).unwrap(),
-                        "text": plain_text("Next Page"),
-                        "action_id": "crafting_next_page",
-                   })
+                         "style": "primary",
+                         "type": "button",
+                         "value": serde_json::to_string(&(plant_id, &steader, page + 1)).unwrap(),
+                         "text": plain_text("Next Page"),
+                         "action_id": "crafting_next_page",
+                    })
                 } else {
                     json!({
-                        "type": "button",
-                        "text": plain_text("Next Page"),
-                        "value": action.value,
-                        "action_id": "crafting_next_page",
-                   })
+                         "type": "button",
+                         "text": plain_text("Next Page"),
+                         "value": action.value,
+                         "action_id": "crafting_next_page",
+                    })
                 });
 
                 blocks.push(json!({
@@ -2626,29 +2631,33 @@ async fn action_endpoint(
                 recipe_page_count
             );
             match route.as_str() {
-                "crafting" => Modal {
-                    method: "open".to_string(),
-                    trigger_id: i.trigger_id,
-                    callback_id: "crafting_modal".to_string(),
-                    title,
-                    private_metadata: String::new(),
-                    blocks,
-                    submit: None,
+                "crafting" => {
+                    Modal {
+                        method: "open".to_string(),
+                        trigger_id: i.trigger_id,
+                        callback_id: "crafting_modal".to_string(),
+                        title,
+                        private_metadata: String::new(),
+                        blocks,
+                        submit: None,
+                    }
+                    .launch()
+                    .await?
                 }
-                .launch()
-                .await?,
-                _ => ModalUpdate {
-                    callback_id: "crafting_modal".to_string(),
-                    blocks,
-                    submit: None,
-                    title,
-                    private_metadata: String::new(),
-                    trigger_id: i.trigger_id,
-                    view_id: i.view.expect("oof no view").root_view_id,
-                    hash: None,
+                _ => {
+                    ModalUpdate {
+                        callback_id: "crafting_modal".to_string(),
+                        blocks,
+                        submit: None,
+                        title,
+                        private_metadata: String::new(),
+                        trigger_id: i.trigger_id,
+                        view_id: i.view.expect("oof no view").root_view_id,
+                        hash: None,
+                    }
+                    .launch()
+                    .await?
                 }
-                .launch()
-                .await?,
             }
         }
         "levels" => {
