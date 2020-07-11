@@ -1,4 +1,4 @@
-#![warn(missing_docs)]
+//#![warn(missing_docs)]
 #![feature(decl_macro)]
 #![feature(proc_macro_hygiene)]
 #![feature(try_trait)]
@@ -915,7 +915,7 @@ fn hackstead_blocks(
                         "accessory": {
                             "type": "button",
                             "text": plain_text("Crafting"),
-                            "value": serde_json::to_string(&(tile.id, &user_id)).unwrap(),
+                            "value": serde_json::to_string(&(tile.id, &user_id, 0)).unwrap(),
                             "action_id": "crafting",
                         }
                     }));
@@ -1661,18 +1661,15 @@ pub struct Modal {
 
 impl Modal {
     async fn launch(self) -> Result<Value, String> {
+        let submit = self.submit.clone();
+        let method = self.method.clone();
+
         let mut o = json!({
             "trigger_id": self.trigger_id,
-            "view": {
-                "type": "modal",
-                "private_metadata": self.private_metadata,
-                "callback_id": self.callback_id,
-                "title": plain_text(self.title),
-                "blocks": self.blocks
-            }
+            "view": self.view()
         });
 
-        if let Some(submit_msg) = self.submit {
+        if let Some(submit_msg) = submit {
             o["view"]
                 .as_object_mut()
                 .unwrap()
@@ -1681,7 +1678,7 @@ impl Modal {
 
         let client = reqwest::Client::new();
         client
-            .post(&format!("https://slack.com/api/views.{}", self.method))
+            .post(&format!("https://slack.com/api/views.{}", method))
             .bearer_auth(&*TOKEN)
             .json(&o)
             .send()
@@ -1690,6 +1687,16 @@ impl Modal {
 
         debug!("{}", serde_json::to_string_pretty(&o).unwrap());
         Ok(o)
+    }
+
+    fn view(self) -> Value {
+        json!({
+            "type": "modal",
+            "private_metadata": self.private_metadata,
+            "callback_id": self.callback_id,
+            "title": plain_text(self.title),
+            "blocks": self.blocks
+        })
     }
 }
 
@@ -2089,13 +2096,12 @@ async fn action_endpoint(
     debug!("{:#?}", i);
 
     let action = i.actions.pop().ok_or_else(|| "no action?".to_string())?;
-
-    let output_json = match action
+    let route = action
         .action_id
         .or(action.name.clone())
-        .ok_or("no action name".to_string())?
-        .as_str()
-    {
+        .ok_or("no action name".to_string())?;
+
+    let output_json = match route.as_str() {
         "hackstead_confirm" => {
             info!("confirming new user!");
             if !hacksteader::exists(&dyn_db(), i.user.id.clone()).await {
@@ -2436,49 +2442,65 @@ async fn action_endpoint(
             .launch()
             .await?
         }
-        "crafting" => {
-            info!("crafting confirmation window");
+        "crafting" | "crafting_next_page" | "crafting_back_page" => {
+            info!("crafting window");
 
-            let (plant_id, steader): (uuid::Uuid, String) =
+            let (plant_id, steader, page): (uuid::Uuid, String, usize) =
                 serde_json::from_str(&action.value).unwrap();
-            let hs = Hacksteader::from_db(&dyn_db(), i.user.id.to_string()).await?;
+            let hs = Hacksteader::from_db(&dyn_db(), steader.to_string()).await?;
             let plant = hs
                 .land
                 .iter()
                 .find_map(|tile| tile.plant.as_ref().filter(|_p| tile.id == plant_id))
-                .ok_or_else(|| format!("no such plant!"))?;
+                .ok_or_else(|| {
+                    let a = format!("couldn't crafing window: no such plant!");
+                    error!("{}", a);
+                    a
+                })?;
             let all_nb = hs.neighbor_bonuses();
             let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
-            let recipes = plant.advancements_sum(neighbor_bonuses.iter()).recipes;
-            let unlocked_recipes = recipes.len();
-            let max_recipes = plant.advancements_max_sum(neighbor_bonuses.iter()).recipes;
-
-            let blocks = recipes
+            let unlocked_recipe_count = plant.advancements_sum(neighbor_bonuses.iter()).recipes.len();
+            let max_recipes = plant
+                .advancements_max_sum(neighbor_bonuses.iter())
+                .recipes
                 .into_iter()
                 .enumerate()
+                .collect::<Vec<_>>();
+            const RECIPE_PAGE_SIZE: usize = 3;
+            let recipe_page_count = max_recipes.chunks(RECIPE_PAGE_SIZE).count();
+            let mut recipe_pages = max_recipes.chunks(RECIPE_PAGE_SIZE).skip(page);
+
+            let this_page_recipes = recipe_pages.next().unwrap_or_default();
+            let next_page_recipes = recipe_pages.next();
+            let mut blocks: Vec<Value> = this_page_recipes
+                .iter()
+                .cloned()
                 .flat_map(|(recipe_handle, raw_recipe)| {
                     use hcor::config::Archetype;
 
+                    if recipe_handle >= unlocked_recipe_count {
+                        return vec![comment(format!(
+                            "*Level up to unlock:* {}",
+                            raw_recipe.lookup_handles().unwrap().title()
+                        ))]
+                    }
+
                     let possible = raw_recipe.satisfies(&hs.inventory);
                     let recipe = raw_recipe
-                        .clone()
                         .lookup_handles()
                         .expect("invalid archetype handle");
                     let mut b = Vec::with_capacity(recipe.needs.len() + 2);
                     let output: Vec<(&'static Archetype, usize)> = recipe.makes.all();
                     let craft_output_count: usize = output.iter().map(|(_, n)| n).sum();
+                    let (hi, lo) = recipe.xp;
 
                     let mut head = json!({
                         "type": "section",
-                        "text": mrkdwn(if craft_output_count <= 1 {
-                                let (hi, lo) = recipe.xp;
-                                format!(
-                                    "*{}* + around {}xp\n_{}_",
-                                    recipe.title(),
-                                    (hi + lo) / 2,
-                                    recipe.explanation()
-                                )
+                        "text": mrkdwn(format!(
+                            "{} + around {}xp\n_{}_",
+                            if craft_output_count <= 1 {
+                                format!("_{}_", recipe.title())
                             } else {
                                 output
                                     .iter()
@@ -2493,8 +2515,10 @@ async fn action_endpoint(
                                         config::RecipeMakes::OneOf(_) => " *or*\n",
                                         _ => " *and*\n",
                                     })
-                            }
-                        ),
+                            },
+                            (hi + lo) / 2,
+                            recipe.explanation()
+                        )),
                     });
                     if possible && steader == i.user.id {
                         head.as_object_mut().unwrap().insert(
@@ -2502,10 +2526,13 @@ async fn action_endpoint(
                             json!({
                                 "type": "button",
                                 "style": "primary",
-                                "text": plain_text(match craft_output_count {
-                                    1 => format!("Craft {}", recipe.title()),
-                                    _ => "Craft".to_string()
-                                }),
+                                "text": plain_text(format!(
+                                    "Craft {}",
+                                    emojify(match recipe.makes.any() {
+                                        Some(i) => &i.name,
+                                        None => "seedlet"
+                                    })
+                                )),
                                 "value": serde_json::to_string(&(
                                     &plant_id,
                                     recipe_handle,
@@ -2529,25 +2556,76 @@ async fn action_endpoint(
 
                     b
                 })
-                .chain(max_recipes.into_iter().skip(unlocked_recipes).map(|r| {
-                    comment(format!(
-                        "*Level up to unlock:* {}",
-                        r.lookup_handles().unwrap().title()
-                    ))
-                }))
                 .collect();
 
-            Modal {
-                method: "open".to_string(),
-                trigger_id: i.trigger_id,
-                callback_id: "crafting_modal".to_string(),
-                title: "Crafting".to_string(),
-                private_metadata: String::new(),
-                blocks,
-                submit: None,
+            if next_page_recipes.is_some() || page != 0 {
+                let mut elements = vec![];
+
+                elements.push(if page != 0 {
+                    json!({
+                        "style": "primary",
+                        "type": "button",
+                        "value": serde_json::to_string(&(plant_id, &steader, page - 1)).unwrap(),
+                        "text": plain_text("Back Page"),
+                        "action_id": "crafting_back_page",
+                    })
+                } else {
+                    json!({
+                        "value": action.value,
+                        "type": "button",
+                        "text": plain_text("Back Page"),
+                        "action_id": "crafting_back_page",
+                    })
+                });
+                elements.push(if next_page_recipes.is_some() {
+                    json!({
+                        "style": "primary",
+                        "type": "button",
+                        "value": serde_json::to_string(&(plant_id, &steader, page + 1)).unwrap(),
+                        "text": plain_text("Next Page"),
+                        "action_id": "crafting_next_page",
+                   })
+                } else {
+                    json!({
+                        "type": "button",
+                        "text": plain_text("Next Page"),
+                        "value": action.value,
+                        "action_id": "crafting_next_page",
+                   })
+                });
+
+                blocks.push(json!({
+                    "type": "actions",
+                    "elements": elements
+                }));
             }
-            .launch()
-            .await?
+
+            let title = format!("Crafting Page {}/{}", page + 1, recipe_page_count);
+            match route.as_str() {
+                "crafting" => Modal {
+                    method: "open".to_string(),
+                    trigger_id: i.trigger_id,
+                    callback_id: "crafting_modal".to_string(),
+                    title,
+                    private_metadata: String::new(),
+                    blocks,
+                    submit: None,
+                }
+                .launch()
+                .await?,
+                _ => ModalUpdate {
+                    callback_id: "crafting_modal".to_string(),
+                    blocks,
+                    submit: None,
+                    title,
+                    private_metadata: String::new(),
+                    trigger_id: i.trigger_id,
+                    view_id: i.view.expect("oof no view").root_view_id,
+                    hash: None,
+                }
+                .launch()
+                .await?,
+            }
         }
         "levels" => {
             let (ah, xp): (config::ArchetypeHandle, u64) =
