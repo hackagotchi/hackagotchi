@@ -2443,6 +2443,7 @@ async fn action_endpoint(
             .await?
         }
         "crafting" | "crafting_next_page" | "crafting_back_page" => {
+            use hcor::config::Recipe;
             info!("crafting window");
 
             let (plant_id, steader, page): (uuid::Uuid, String, usize) =
@@ -2460,108 +2461,118 @@ async fn action_endpoint(
             let all_nb = hs.neighbor_bonuses();
             let neighbor_bonuses = all_nb.bonuses_for_plant(plant_id, plant.archetype_handle);
 
-            let unlocked_recipe_count = plant.advancements_sum(neighbor_bonuses.iter()).recipes.len();
-            let max_recipes = plant
-                .advancements_max_sum(neighbor_bonuses.iter())
+            const RECIPE_PAGE_SIZE: usize = 12;
+            let unlocked_recipes = plant
+                .advancements_sum(neighbor_bonuses.iter())
                 .recipes
                 .into_iter()
                 .enumerate()
                 .collect::<Vec<_>>();
-            const RECIPE_PAGE_SIZE: usize = 3;
-            let recipe_page_count = max_recipes.chunks(RECIPE_PAGE_SIZE).count();
-            let mut recipe_pages = max_recipes.chunks(RECIPE_PAGE_SIZE).skip(page);
+            let max_recipes = plant.advancements_max_sum(neighbor_bonuses.iter()).recipes;
+            let locked_recipes = max_recipes.iter().skip(unlocked_recipes.len());
+            let extra_page = max_recipes.len() != unlocked_recipes.len();
+            let recipe_page_count = {
+                let l = unlocked_recipes.chunks(RECIPE_PAGE_SIZE).count();
 
-            let this_page_recipes = recipe_pages.next().unwrap_or_default();
-            let next_page_recipes = recipe_pages.next();
-            let mut blocks: Vec<Value> = this_page_recipes
-                .iter()
-                .cloned()
-                .flat_map(|(recipe_handle, raw_recipe)| {
-                    use hcor::config::Archetype;
+                if extra_page { l + 1 } else { l }
+            };
+            let last_page = recipe_page_count == (page + 1);
+            let first_page = page == 0;
+            let mut recipe_pages = unlocked_recipes.chunks(RECIPE_PAGE_SIZE).skip(page);
 
-                    if recipe_handle >= unlocked_recipe_count {
-                        return vec![comment(format!(
-                            "*Level up to unlock:* {}",
-                            raw_recipe.lookup_handles().unwrap().title()
-                        ))]
-                    }
+            let this_page_unlocked_recipes = recipe_pages.next();
+            let make_unlocked_recipe_blocks = |(recipe_handle, raw_recipe): (_, Recipe<usize>)| {
+                 use hcor::config::Archetype;
 
-                    let possible = raw_recipe.satisfies(&hs.inventory);
-                    let recipe = raw_recipe
-                        .lookup_handles()
-                        .expect("invalid archetype handle");
-                    let mut b = Vec::with_capacity(recipe.needs.len() + 2);
-                    let output: Vec<(&'static Archetype, usize)> = recipe.makes.all();
-                    let craft_output_count: usize = output.iter().map(|(_, n)| n).sum();
-                    let (hi, lo) = recipe.xp;
+                let possible = raw_recipe.satisfies(&hs.inventory);
+                let recipe = raw_recipe
+                    .lookup_handles()
+                    .expect("invalid archetype handle");
+                let mut b = Vec::with_capacity(recipe.needs.len() + 2);
+                let output: Vec<(&'static Archetype, usize)> = recipe.makes.all();
+                let craft_output_count: usize = output.iter().map(|(_, n)| n).sum();
+                let (hi, lo) = recipe.xp;
 
-                    let mut head = json!({
-                        "type": "section",
-                        "text": mrkdwn(format!(
-                            "{} + around {}xp\n_{}_",
-                            if craft_output_count <= 1 {
-                                format!("_{}_", recipe.title())
-                            } else {
-                                output
-                                    .iter()
-                                    .map(|(a, n)| format!(
-                                        "*{}* {} _{}_",
-                                        n,
-                                        emojify(&a.name),
-                                        a.name,
-                                    ))
-                                    .collect::<Vec<String>>()
-                                    .join(match recipe.makes {
-                                        config::RecipeMakes::OneOf(_) => " *or*\n",
-                                        _ => " *and*\n",
-                                    })
-                            },
-                            (hi + lo) / 2,
-                            recipe.explanation()
-                        )),
-                    });
-                    if possible && steader == i.user.id {
-                        head.as_object_mut().unwrap().insert(
-                            "accessory".to_string(),
-                            json!({
-                                "type": "button",
-                                "style": "primary",
-                                "text": plain_text(format!(
-                                    "Craft {}",
-                                    emojify(match recipe.makes.any() {
-                                        Some(i) => &i.name,
-                                        None => "seedlet"
-                                    })
-                                )),
-                                "value": serde_json::to_string(&(
-                                    &plant_id,
-                                    recipe_handle,
-                                )).unwrap(),
-                                "action_id": "crafting_confirm",
-                            }),
-                        );
-                    }
-                    b.push(head);
+                let mut head = json!({
+                    "type": "section",
+                    "text": mrkdwn(format!(
+                        "{} + around {}xp\n_{}_",
+                        if craft_output_count <= 1 {
+                            format!("_{}_", recipe.title())
+                        } else {
+                            output
+                                .iter()
+                                .map(|(a, n)| format!(
+                                    "*{}* {} _{}_",
+                                    n,
+                                    emojify(&a.name),
+                                    a.name,
+                                ))
+                                .collect::<Vec<String>>()
+                                .join(match recipe.makes {
+                                    config::RecipeMakes::OneOf(_) => " *or*\n",
+                                    _ => " *and*\n",
+                                })
+                        },
+                        (hi + lo) / 2,
+                        recipe.explanation()
+                    )),
+                });
+                if possible && steader == i.user.id {
+                    head.as_object_mut().unwrap().insert(
+                        "accessory".to_string(),
+                        json!({
+                            "type": "button",
+                            "style": "primary",
+                            "text": plain_text(format!(
+                                "Craft {}",
+                                emojify(match recipe.makes.any() {
+                                    Some(i) => &i.name,
+                                    None => "seedlet"
+                                })
+                            )),
+                            "value": serde_json::to_string(&(
+                                &plant_id,
+                                recipe_handle,
+                            )).unwrap(),
+                            "action_id": "crafting_confirm",
+                        }),
+                    );
+                }
+                b.push(head);
 
-                    b.push(comment("*needs:* ".to_string()));
-                    for (count, resource) in recipe.needs {
-                        b.push(comment(format!(
-                            "*{}* {} _{}_",
-                            count,
-                            emojify(&resource.name),
-                            resource.name
-                        )));
-                    }
-                    b.push(json!({ "type": "divider" }));
+                b.push(comment("*needs:* ".to_string()));
+                for (count, resource) in recipe.needs {
+                    b.push(comment(format!(
+                        "*{}* {} _{}_",
+                        count,
+                        emojify(&resource.name),
+                        resource.name
+                    )));
+                }
+                b.push(json!({ "type": "divider" }));
 
-                    b
-                })
-                .collect();
+                b
+            };
+            let mut blocks: Vec<Value> = match this_page_unlocked_recipes {
+                Some(r) => r
+                    .iter()
+                    .cloned()
+                    .flat_map(make_unlocked_recipe_blocks)
+                    .collect(),
+                None => locked_recipes
+                    .map(|raw_recipe| comment(format!(
+                        "*Level up to unlock:* {}",
+                        raw_recipe.clone().lookup_handles().unwrap().title()
+                    )))
+                    .collect(),
+            };
 
-            if next_page_recipes.is_some() || page != 0 {
+
+            if !last_page || !first_page {
                 let mut elements = vec![];
 
-                elements.push(if page != 0 {
+                elements.push(if !first_page {
                     json!({
                         "style": "primary",
                         "type": "button",
@@ -2577,7 +2588,7 @@ async fn action_endpoint(
                         "action_id": "crafting_back_page",
                     })
                 });
-                elements.push(if next_page_recipes.is_some() {
+                elements.push(if !last_page {
                     json!({
                         "style": "primary",
                         "type": "button",
@@ -2600,7 +2611,20 @@ async fn action_endpoint(
                 }));
             }
 
-            let title = format!("Crafting Page {}/{}", page + 1, recipe_page_count);
+            const MAX_NAME_LEN: usize = 14;
+            let title = format!(
+                "{} Crafting {}/{}",
+                if plant.name.len() > MAX_NAME_LEN {
+                    let mut p = plant.name.clone();
+                    p.truncate(MAX_NAME_LEN - 3);
+                    p.push_str("...");
+                    p
+                } else {
+                    plant.name.clone()
+                },
+                page + 1,
+                recipe_page_count
+            );
             match route.as_str() {
                 "crafting" => Modal {
                     method: "open".to_string(),
