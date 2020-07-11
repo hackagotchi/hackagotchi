@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hcor = { path = "../hcor" }
+hcor = { git = "https://github.com/hackagotchi/hcor.git" }
 rocket = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
 rocket_contrib = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
 reqwest = { version = "0.10.4", features = ["json"] }

@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "gotchi"
-version = "1.0.3"
+version = "1.0.10"
 dependencies = [
  "crossbeam-channel",
  "dotenv",
@@ -606,7 +606,8 @@ dependencies = [
 
 [[package]]
 name = "hcor"
-version = "1.0.3"
+version = "1.1.0"
+source = "git+https://github.com/hackagotchi/hcor.git#873e98cd3700e0568654588571e8911cba983698"
 dependencies = [
  "derive_more",
  "dotenv",
