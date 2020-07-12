@@ -467,7 +467,7 @@ impl PossessionOverviewPage {
                         back_page.page = *page - 1;
                         buttons.push(json!({
                             "type": "button",
-                            "text": plain_text("Back Page"),
+                            "text": plain_text("Previous Page"),
                             "style": "primary",
                             "value": serde_json::to_string(back_page).unwrap(),
                             "action_id": "possession_overview_page"
@@ -2599,14 +2599,14 @@ async fn action_endpoint(
                         "style": "primary",
                         "type": "button",
                         "value": serde_json::to_string(&(plant_id, &steader, page - 1)).unwrap(),
-                        "text": plain_text("Back Page"),
+                        "text": plain_text("Previous Page"),
                         "action_id": "crafting_back_page",
                     })
                 } else {
                     json!({
                         "value": action.value,
                         "type": "button",
-                        "text": plain_text("Back Page"),
+                        "text": plain_text("Previous Page"),
                         "action_id": "crafting_back_page",
                     })
                 });
