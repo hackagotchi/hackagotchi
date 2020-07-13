@@ -226,7 +226,7 @@ fn hackmarket_purchase<'a>(
             }).map_err(|e| format!("database err: {}", e)),
             banker::pay(seller.clone(), price, paid_for),
             market::log_blocks(
-                format!("{} purchased a {} on hackmarket for {} GP!", 
+                format!("<@{}> purchased a {} on hackmarket for {} GP!", 
                 paid_invoice.invoicee,
                 name,
                 price
