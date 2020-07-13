@@ -1,6 +1,6 @@
 [package]
 name = "gotchi"
-version = "1.0.11"
+version = "1.0.12"
 authors = ["ubuntu"]
 edition = "2018"
 
