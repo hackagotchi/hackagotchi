@@ -8,8 +8,8 @@ edition = "2018"
 
 [dependencies]
 hcor = { git = "https://github.com/hackagotchi/hcor.git" }
-rocket = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
-rocket_contrib = { git = "https://github.com/SergioBenitez/Rocket.git", branch = "async" }
+rocket = { git = "https://github.com/SergioBenitez/Rocket.git" }
+rocket_contrib = { git = "https://github.com/SergioBenitez/Rocket.git" }
 reqwest = { version = "0.10.4", features = ["json"] }
 crossbeam-channel = "0.4.2"
 serde = { version = "1.0.105", features = ["derive"] }
