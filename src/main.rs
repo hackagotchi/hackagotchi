@@ -2267,37 +2267,32 @@ async fn action_endpoint(
                                 let mut seed_iter = seeds
                                     .iter()
                                     .filter(|s| s.inner.grows_into == pa.name);
-                                let first_seed = seed_iter.next();
-                                // technically a lie if first_seed is None
+                                let first_seed = seed_iter.next()?;
                                 let seed_count = seed_iter.count() + 1;
 
-                                if let Some(s) = first_seed {
-                                    let mut desc = format!(
-                                        "{} - {}",
-                                        seed_count,
-                                        s.description
-                                    );
-                                    desc.truncate(75);
-                                    if dbg!(desc.len()) == 75 {
-                                        desc.truncate(71);
-                                        desc.push_str("...")
-                                    }
-
-                                    Some(json!({
-                                        "label": plain_text(&pa.name),
-                                        "options": [{
-                                            "text": plain_text(format!("{} {}", emojify(&s.name), s.name)),
-                                            "description": plain_text(desc),
-                                            // this is fucky-wucky because value can only be 75 chars
-                                            "value": serde_json::to_string(&(
-                                                &tile_id.to_simple().to_string(),
-                                                s.id.to_simple().to_string(),
-                                            )).unwrap(),
-                                        }]
-                                    }))
-                                } else {
-                                    None
+                                let mut desc = format!(
+                                    "{} - {}",
+                                    seed_count,
+                                    first_seed.description
+                                );
+                                desc.truncate(75);
+                                if dbg!(desc.len()) == 75 {
+                                    desc.truncate(71);
+                                    desc.push_str("...")
                                 }
+
+                                Some(json!({
+                                    "label": plain_text(&pa.name),
+                                    "options": [{
+                                        "text": plain_text(format!("{} {}", emojify(&first_seed.name), first_seed.name)),
+                                        "description": plain_text(desc),
+                                        // this is fucky-wucky because value can only be 75 chars
+                                        "value": serde_json::to_string(&(
+                                            &tile_id.to_simple().to_string(),
+                                            first_seed.id.to_simple().to_string(),
+                                        )).unwrap(),
+                                    }]
+                                }))
                             })
                             .collect::<Vec<Value>>(),
                     }
@@ -2633,7 +2628,7 @@ async fn action_endpoint(
                 }));
             }
 
-            const MAX_NAME_LEN: usize = 14;
+            const MAX_NAME_LEN: usize = 11;
             let title = format!(
                 "{} Crafting {}/{}",
                 if plant.name.len() > MAX_NAME_LEN {
@@ -2848,8 +2843,6 @@ async fn action_endpoint(
             .await?
         }
         "item_apply" => {
-            use possess::Keepsake;
-
             let (tile_id, user_id): (uuid::Uuid, String) = serde_json::from_str(&action.value)
                 .map_err(|e| {
                     let a = format!("couldn't parse action value: {}", e);
@@ -2873,23 +2866,6 @@ async fn action_endpoint(
                     error!("{}", e);
                     e
                 })?;
-            let applicables: Vec<Possessed<Keepsake>> = inventory
-                .into_iter()
-                .filter_map(|x| x.try_into().ok())
-                .filter(|x: &Possessed<Keepsake>| {
-                    x.inner
-                        .item_application
-                        .as_ref()
-                        .map(|item_appl| {
-                            item_appl
-                                .effects
-                                .iter()
-                                .any(|e| e.keep_plants.allows(&plant.name))
-                        })
-                        .unwrap_or(false)
-                })
-                .take(40)
-                .collect();
 
             Modal {
                 method: "open".to_string(),
@@ -2903,23 +2879,60 @@ async fn action_endpoint(
                     "block_id": "item_apply_input",
                     "element": {
                         "type": "static_select",
-                        "placeholder": plain_text("Which item do ya wanna use on this plant?"),
+                        "placeholder": plain_text("Which item do you wanna use on this plant?"),
                         "action_id": "item_apply_select",
-                        // show them each applicable item they have sorted by category
-                        "options": applicables
-                            .into_iter()
-                            .filter_map(|i| {
+                        // show them each item they have that can be applied
+                        "option_groups": CONFIG
+                            .possession_archetypes
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, pa)| {
+                                pa
+                                    .kind
+                                    .keepsake()
+                                    .and_then(|i| {
+                                        i
+                                            .item_application
+                                            .as_ref()
+                                            .map(|item_appl| {
+                                                item_appl
+                                                    .effects
+                                                    .iter()
+                                                    .any(|e| e.keep_plants.allows(&plant.name))
+                                            })
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .filter_map(|(pah, pa)| { // possession archetype handle, possession archetype
+                                let item = inventory.iter().find(|i| i.archetype_handle == pah)?;
+                                let has_count = inventory.iter().filter(|i| i.archetype_handle == pah).count();
+                                let mut desc = pa
+                                    .kind
+                                    .keepsake()?
+                                    .item_application
+                                    .as_ref()?
+                                    .short_description
+                                    .clone();
+                                desc.truncate(75);
+                                if dbg!(desc.len()) == 75 {
+                                    desc.truncate(71);
+                                    desc.push_str("...")
+                                }
+
                                 Some(json!({
-                                    "text": plain_text(format!("{} {}", emojify(&i.name), i.name)),
-                                    "description": plain_text(&i.inner.item_application.as_ref()?.short_description),
-                                    // this is fucky-wucky because value can only be 75 chars
-                                    "value": serde_json::to_string(&(
-                                        &tile_id.to_simple().to_string(),
-                                        i.id.to_simple().to_string(),
-                                    )).unwrap(),
+                                    "label": plain_text(format!("{} {}", emojify(&pa.name), pa.name)),
+                                    "options": [{
+                                        "text": plain_text(has_count),
+                                        "description": plain_text(desc),
+                                        // this is fucky-wucky because value can only be 75 chars
+                                        "value": serde_json::to_string(&(
+                                            &tile_id.to_simple().to_string(),
+                                            item.id.to_simple().to_string(),
+                                        )).unwrap(),
+                                    }]
                                 }))
                             })
-                            .collect::<Vec<Value>>(),
+                            .collect::<Vec<Value>>()
                     }
                 })],
                 submit: Some("Apply!".to_string()),
