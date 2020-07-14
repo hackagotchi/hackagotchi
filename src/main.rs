@@ -1418,7 +1418,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         static ref HGIVE: Regex = Regex::new("<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):").unwrap();
     );
 
-    info!("trying /give {}", slash_command.text);
+    info!("trying /hgive {}", slash_command.text);
     let c = match HGIVE.captures(&slash_command.text) {
         Some(c) => c,
         None => return res("Invalid syntax!"),
