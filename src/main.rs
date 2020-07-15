@@ -1418,7 +1418,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         static ref HGIVE: Regex = Regex::new("<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):").unwrap();
     );
 
-    info!("trying /give {}", slash_command.text);
+    info!("trying /hgive {}", slash_command.text);
     let c = match HGIVE.captures(&slash_command.text) {
         Some(c) => c,
         None => return res("Invalid syntax!"),
@@ -1486,6 +1486,10 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     } else if amount == 0 {
         res("Well, I mean ... that's not really anything but ... ok")
     } else {
+        let notif_msg = format!(
+            "<@{}> transferred {} {} {}!",
+            user, receiver, amount, possession_archetype.name
+        );
         let res_msg = json!({
             "blocks": [
                 {
@@ -1511,11 +1515,8 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
                 comment("TAKE THIS AND DONT TELL MOM")
             ],
             "response_type": "in_channel",
+            "text": notif_msg
         });
-        let notif_msg = format!(
-            "<@{}> sent you {} {}!",
-            user, amount, possession_archetype.name
-        );
 
         tokio::spawn(async move {
             info!("I mean this happens?");
