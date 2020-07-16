@@ -3128,12 +3128,31 @@ pub struct ItemApplication {
     item: uuid::Uuid,
 }
 
+fn setup_logger() -> Result<(), fern::InitError> {
+    fern::Dispatch::new()
+        .format(|out, msg, record| {
+            out.finish(format_args!(
+                    "{}[{}][{}] {}",
+                    chrono::Local::now().format("[%y-%m-%d][%H:%M:%S]"),
+                    record.target(),
+                    record.level(),
+                    msg
+            ))
+        })
+        .level(log::LevelFilter::Debug)
+        .chain(std::io::stdout())
+        .chain(fern::log_file("output.log")?)
+        .apply()?;
+
+    Ok(())
+}
+
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     use rocket_contrib::serve::StaticFiles;
 
     dotenv::dotenv().ok();
-    pretty_env_logger::init();
+    setup_logger()?; 
 
     info!("starting");
 
