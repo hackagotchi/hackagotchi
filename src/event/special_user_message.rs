@@ -160,7 +160,7 @@ fn yank_config<'a>(
     use rand::seq::SliceRandom;
 
     async move {
-        banker::message(match crate::yank_config::yank_config().await {
+        banker::message(match hcor::yank_config::yank_config().await {
             Ok(()) => format!(
                 "{} goblin chanting hath brought forth new config from the heavens!",
                 CHANTING_DESCRIPTIONS

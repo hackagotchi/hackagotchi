@@ -595,7 +595,7 @@ checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 
 [[package]]
 name = "gotchi"
-version = "1.0.12"
+version = "1.0.13"
 dependencies = [
  "crossbeam-channel",
  "dotenv",
@@ -639,8 +639,8 @@ dependencies = [
 
 [[package]]
 name = "hcor"
-version = "1.1.0"
-source = "git+https://github.com/hackagotchi/hcor.git#873e98cd3700e0568654588571e8911cba983698"
+version = "1.2.0"
+source = "git+https://github.com/hackagotchi/hcor.git#b6a4bb593c3a1171cd261503ce908b01ae08ba1c"
 dependencies = [
  "derive_more",
  "dotenv",
@@ -650,10 +650,12 @@ dependencies = [
  "log",
  "rand",
  "regex",
+ "reqwest",
  "rusoto_core",
  "rusoto_dynamodb",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
