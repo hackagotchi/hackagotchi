@@ -3132,11 +3132,11 @@ fn setup_logger() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(|out, msg, record| {
             out.finish(format_args!(
-                    "{}[{}][{}] {}",
-                    chrono::Local::now().format("[%y-%m-%d][%H:%M:%S]"),
-                    record.target(),
-                    record.level(),
-                    msg
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                msg
             ))
         })
         .level(log::LevelFilter::Debug)
@@ -3152,7 +3152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     use rocket_contrib::serve::StaticFiles;
 
     dotenv::dotenv().ok();
-    setup_logger()?; 
+    setup_logger()?;
 
     info!("starting");
 

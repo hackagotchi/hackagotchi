@@ -309,7 +309,15 @@ fn sheet_to_advancement() {
     let sheet = Sheet {
         name: "test plant".to_string(),
         values: vec![
-            vec!["0", "Title", "Desc", "A_Title", "Art", "YieldSizeMultiplier", "1.1"],
+            vec![
+                "0",
+                "Title",
+                "Desc",
+                "A_Title",
+                "Art",
+                "YieldSizeMultiplier",
+                "1.1",
+            ],
             vec![
                 "2",
                 "Title2",
