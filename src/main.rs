@@ -25,7 +25,6 @@ pub mod banker;
 pub mod event;
 pub mod hacksteader;
 pub mod market;
-mod yank_config;
 
 use hacksteader::Hacksteader;
 
