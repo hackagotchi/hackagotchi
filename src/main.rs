@@ -3139,6 +3139,20 @@ fn setup_logger() -> Result<(), fern::InitError> {
             ))
         })
         .level(log::LevelFilter::Debug)
+        .chain(fern::log_file("debug.log")?)
+        .apply()?;
+
+    fern::Dispatch::new()
+        .format(|out, msg, record| {
+            out.finish(format_args!(
+                    "{}[{}][{}] {}",
+                    chrono::Local::now().format("[%y-%m-%d[%H:%M:%S]]"),
+                    record.target(),
+                    record.level(),
+                    msg
+            ))
+        })
+        .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         .apply()?;
