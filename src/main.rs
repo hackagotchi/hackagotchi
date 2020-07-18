@@ -673,7 +673,7 @@ impl PossessionPage {
                 "In order to buy this, you have to have a \
                 <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
                 std::env::var("APP_ID").expect("no app_id env var")
-            )))
+            )));
         }
 
         blocks
@@ -3939,10 +3939,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 steadercount
             ],
         )
-        .mount(
-            "/gotchi/img",
-            StaticFiles::from("/img")),
-        )
+        .mount("/gotchi/img", StaticFiles::from("/img"))
         .launch()
         .await
         .expect("launch fail");
