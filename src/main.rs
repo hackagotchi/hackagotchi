@@ -1415,7 +1415,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     }
 
     lazy_static::lazy_static!(
-        static ref HGIVE: Regex = Regex::new("<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):").unwrap();
+        static ref HGIVE: Regex = Regex::new("^<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):$").unwrap();
     );
 
     info!("trying /hgive {}", slash_command.text);
