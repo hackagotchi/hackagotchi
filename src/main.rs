@@ -668,10 +668,11 @@ impl PossessionPage {
 
         if let (Credentials::None, true) = (credentials, interactivity.market(*credentials)) {
             blocks.push(json!({ "type": "divider" }));
-            blocks.push(comment(
+            blocks.push(comment(format!(
                 "In order to buy this, you have to have a \
                 <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
-            ));
+                std::env::var("APP_ID").expect("no app_id env var")
+            )));
         }
 
         blocks
@@ -1414,7 +1415,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     }
 
     lazy_static::lazy_static!(
-        static ref HGIVE: Regex = Regex::new("<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):").unwrap();
+        static ref HGIVE: Regex = Regex::new("^<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):$").unwrap();
     );
 
     info!("trying /hgive {}", slash_command.text);
@@ -3956,10 +3957,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 steadercount
             ],
         )
-        .mount(
-            "/gotchi/img",
-            StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
-        )
+        .mount("/gotchi/img", StaticFiles::from("/img"))
         .launch()
         .await
         .expect("launch fail");
