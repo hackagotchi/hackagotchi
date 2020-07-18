@@ -669,11 +669,11 @@ impl PossessionPage {
 
         if let (Credentials::None, true) = (credentials, interactivity.market(*credentials)) {
             blocks.push(json!({ "type": "divider" }));
-            blocks.push(comment(
+            blocks.push(comment(format!(
                 "In order to buy this, you have to have a \
                 <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
-                env!("APP_ID"),
-            ));
+                std::env::var("APP_ID").expect("no app_id env var")
+            )))
         }
 
         blocks
@@ -3941,7 +3941,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         )
         .mount(
             "/gotchi/img",
-            StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
+            StaticFiles::from("/img")),
         )
         .launch()
         .await
