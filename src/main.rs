@@ -672,6 +672,7 @@ impl PossessionPage {
             blocks.push(comment(
                 "In order to buy this, you have to have a \
                 <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
+                env!("APP_ID"),
             ));
         }
 
