@@ -668,10 +668,11 @@ impl PossessionPage {
 
         if let (Credentials::None, true) = (credentials, interactivity.market(*credentials)) {
             blocks.push(json!({ "type": "divider" }));
-            blocks.push(comment(
+            blocks.push(comment(format!(
                 "In order to buy this, you have to have a \
                 <slack://app?team=T0266FRGM&id={}&tab=home|hackstead>.",
-            ));
+                std::env::var("APP_ID").expect("no app_id env var")
+            )));
         }
 
         blocks
@@ -1414,7 +1415,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     }
 
     lazy_static::lazy_static!(
-        static ref HGIVE: Regex = Regex::new("<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):").unwrap();
+        static ref HGIVE: Regex = Regex::new("^<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):$").unwrap();
     );
 
     debug!("trying /hgive {}", slash_command.text);
@@ -3128,7 +3129,9 @@ pub struct ItemApplication {
 }
 
 fn setup_logger() -> Result<(), fern::InitError> {
-    fern::Dispatch::new()
+
+    let base_config = fern::Dispatch::new();
+    let debug_config = fern::Dispatch::new()
         .format(|out, msg, record| {
             out.finish(format_args!(
                 "{}[{}][{}] {}",
@@ -3138,11 +3141,10 @@ fn setup_logger() -> Result<(), fern::InitError> {
                 msg
             ))
         })
-        .level(log::LevelFilter::Debug)
-        .chain(fern::log_file("debug.log")?)
-        .apply()?;
+        .level_for("gotchi", log::LevelFilter::Debug)
+        .chain(fern::log_file("debug.log")?);
 
-    fern::Dispatch::new()
+    let info_config = fern::Dispatch::new()
         .format(|out, msg, record| {
             out.finish(format_args!(
                     "{}[{}][{}] {}",
@@ -3154,8 +3156,12 @@ fn setup_logger() -> Result<(), fern::InitError> {
         })
         .level(log::LevelFilter::Info)
         .level_for("rocket", log::LevelFilter::Error)
-        .chain(std::io::stdout())
-        .chain(fern::log_file("output.log")?)
+       .chain(std::io::stdout())
+        .chain(fern::log_file("output.log")?);
+
+    base_config
+        .chain(debug_config)
+        .chain(info_config)
         .apply()?;
 
     Ok(())
@@ -3971,10 +3977,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 steadercount
             ],
         )
-        .mount(
-            "/gotchi/img",
-            StaticFiles::from(concat!(env!("CARGO_MANIFEST_DIR"), "/img")),
-        )
+        .mount("/gotchi/img", StaticFiles::from("/img"))
         .launch()
         .await
         .expect("launch fail");
