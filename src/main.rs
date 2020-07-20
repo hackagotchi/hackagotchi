@@ -3129,7 +3129,6 @@ pub struct ItemApplication {
 }
 
 fn setup_logger() -> Result<(), fern::InitError> {
-
     let base_config = fern::Dispatch::new();
     let debug_config = fern::Dispatch::new()
         .format(|out, msg, record| {
@@ -3147,22 +3146,19 @@ fn setup_logger() -> Result<(), fern::InitError> {
     let info_config = fern::Dispatch::new()
         .format(|out, msg, record| {
             out.finish(format_args!(
-                    "{}[{}][{}] {}",
-                    chrono::Local::now().format("[%y-%m-%d[%H:%M:%S]]"),
-                    record.target(),
-                    record.level(),
-                    msg
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%y-%m-%d[%H:%M:%S]]"),
+                record.target(),
+                record.level(),
+                msg
             ))
         })
         .level(log::LevelFilter::Info)
         .level_for("rocket", log::LevelFilter::Error)
-       .chain(std::io::stdout())
+        .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?);
 
-    base_config
-        .chain(debug_config)
-        .chain(info_config)
-        .apply()?;
+    base_config.chain(debug_config).chain(info_config).apply()?;
 
     Ok(())
 }
