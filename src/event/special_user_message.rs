@@ -329,7 +329,6 @@ lazy_static::lazy_static! {
 
 #[derive(Deserialize)]
 struct BuildTask {
-
     pub name: String,
     pub status: String,
     pub log: String,
@@ -339,7 +338,6 @@ struct BuildsResponse {
     pub id: u32,
     pub status: String,
     pub setup_log: String,
-    
 }
 fn deploy_command<'a>(
     c: regex::Captures<'a>,
@@ -374,7 +372,10 @@ fn deploy_command<'a>(
             .send()
             .await
             .map_err(|e| format!("API Error: {:?}", e))?;
-        let res_json = res.json::<BuildsResponse>().await.map_err(|_| "Invalid API Response")?;
+        let res_json = res
+            .json::<BuildsResponse>()
+            .await
+            .map_err(|_| "Invalid API Response")?;
         banker::message(format!("Build submitted! URL: {}", res_json.setup_log)).await?;
         Ok(())
     }
@@ -389,19 +390,19 @@ lazy_static::lazy_static! {
 }
 
 fn restart_command<'a>(
-        _: regex::Captures<'a>,
-            _: Message,
-                _: &'a Sender<FarmingInputEvent>,
-                ) -> HandlerOutput<'a> {
-
+    _: regex::Captures<'a>,
+    _: Message,
+    _: &'a Sender<FarmingInputEvent>,
+) -> HandlerOutput<'a> {
     use std::fs;
     async move {
         banker::message(match fs::write("restart", "restarting") {
             Ok(()) => "Scheduled a restart!".to_string(),
-            Err(e) => e.to_string()
-        }).await?;
+            Err(e) => e.to_string(),
+        })
+        .await?;
 
         Ok(())
-    }.boxed()
-
+    }
+    .boxed()
 }
