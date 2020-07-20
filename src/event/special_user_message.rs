@@ -6,6 +6,7 @@ lazy_static::lazy_static! {
         regex: Regex::new("<@([A-z|0-9]+)> spawn (<@([A-z|0-9]+)> )?(([0-9]+) )?(.+)").unwrap(),
         then: &spawn_command
     };
+    
 }
 fn spawn_command<'a>(
     c: regex::Captures<'a>,
@@ -316,4 +317,30 @@ fn nab_command<'a>(
         Ok(())
     }
     .boxed()
+}
+
+lazy_static::lazy_static! {
+    pub static ref DEPLOY_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
+        regex: Regex::new("<@([A-z|0-9]+)> deploy (.*)").unwrap(),
+        then: &deploy_command,
+    };
+}
+fn deploy_command<'a>(c: regex::Captures<'a>, _: Message, _: &'a Sender<FarmingInputEvent>,) -> HandlerOutput<'a> {
+    use std::fs;
+    use std::collections::HashMap;
+    async move {
+    let deploy_target = c.get(2).ok_or_else(|| "No deploy target".to_string())?.as_str().to_string();
+    let manifest = fs::read_to_string(format!("./manifests/{}.yml", deploy_target)).map_err(|_| "Invalid deploy target".to_string())?;
+    let mut json_request: HashMap<String, String> = HashMap::new();
+    json_request.insert("manifest".to_string(), manifest);
+    json_request.insert("note".to_string(), "Submitted automatically by hackagotchi".to_string());
+
+    let client = reqwest::Client::new();
+    client.post("https://builds.sr.ht/api/jobs")
+        .header("Authorization", format!("token {}", std::env::var("SRHT_OAUTH_TOKEN").unwrap_or("invalid-token".to_string())))
+        .json(&json_request)
+        .send()
+        .await.map_err(|e| format!("API Error: {:?}", e))?;
+        Ok(())
+    }.boxed()
 }
