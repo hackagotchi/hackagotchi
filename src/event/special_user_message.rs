@@ -1,5 +1,6 @@
 use super::prelude::*;
 use super::SpecialUserMessageTrigger;
+use serde::Deserialize;
 
 lazy_static::lazy_static! {
     pub static ref SPAWN_COMMAND: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
@@ -325,6 +326,21 @@ lazy_static::lazy_static! {
         then: &deploy_command,
     };
 }
+
+#[derive(Deserialize)]
+struct BuildTask {
+
+    pub name: String,
+    pub status: String,
+    pub log: String,
+}
+#[derive(Deserialize)]
+struct BuildsResponse {
+    pub id: u32,
+    pub status: String,
+    pub setup_log: String,
+    
+}
 fn deploy_command<'a>(
     c: regex::Captures<'a>,
     _: Message,
@@ -345,7 +361,7 @@ fn deploy_command<'a>(
             "execute": true
         });
         let client = reqwest::Client::new();
-        client
+        let res = client
             .post("https://builds.sr.ht/api/jobs")
             .header(
                 "Authorization",
@@ -358,7 +374,34 @@ fn deploy_command<'a>(
             .send()
             .await
             .map_err(|e| format!("API Error: {:?}", e))?;
+        let res_json = res.json::<BuildsResponse>().await.map_err(|_| "Invalid API Response")?;
+        banker::message(format!("Build submitted! URL: {}", res_json.setup_log)).await?;
         Ok(())
     }
     .boxed()
+}
+
+lazy_static::lazy_static! {
+    pub static ref RESTART_SERVER: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
+            regex: Regex::new("<@([A-z|0-9]+)> goblin chant").unwrap(),
+            then: &restart_command,
+    };
+}
+
+fn restart_command<'a>(
+        _: regex::Captures<'a>,
+            _: Message,
+                _: &'a Sender<FarmingInputEvent>,
+                ) -> HandlerOutput<'a> {
+
+    use std::fs;
+    async move {
+        banker::message(match fs::write("restart", "restarting") {
+            Ok(()) => "Scheduled a restart!".to_string(),
+            Err(e) => e.to_string()
+        }).await?;
+
+        Ok(())
+    }.boxed()
+
 }
