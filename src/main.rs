@@ -3153,6 +3153,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
             ))
         })
         .level(log::LevelFilter::Info)
+        .level_for("rocket", log::LevelFilter::Error)
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         .apply()?;
