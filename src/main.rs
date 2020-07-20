@@ -1264,7 +1264,7 @@ struct SlashCommand {
 
 #[post("/hackmarket", data = "<slash_command>")]
 async fn hackmarket<'a>(slash_command: LenientForm<SlashCommand>) -> Result<(), String> {
-    info!("{} | {}", slash_command.command, slash_command.text);
+    debug!("{} | {}", slash_command.command, slash_command.text);
 
     Modal {
         method: "open".to_string(),
@@ -1404,7 +1404,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
     use regex::Regex;
 
     fn res<S: std::string::ToString>(s: S) -> Json<Value> {
-        info!("{}", s.to_string());
+        debug!("{}", s.to_string());
         Json(json!({
             "blocks": [{
                 "type": "section",
@@ -1418,12 +1418,12 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         static ref HGIVE: Regex = Regex::new("^<@([A-z0-9]+)\\|.+>( [0-9]+)? :(.+):$").unwrap();
     );
 
-    info!("trying /hgive {}", slash_command.text);
+    debug!("trying /hgive {}", slash_command.text);
     let c = match HGIVE.captures(&slash_command.text) {
         Some(c) => c,
         None => return res("Invalid syntax!"),
     };
-    info!("{:?}", c);
+    debug!("{:?}", c);
     let receiver = match c.get(1) {
         Some(s) => s.as_str().to_string(),
         None => return res("Couldn't parse receiver?"),
@@ -1519,7 +1519,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         });
 
         tokio::spawn(async move {
-            info!("I mean this happens?");
+            debug!("I mean this happens?");
 
             let _ = gift_dm(
                 &user,
@@ -1976,7 +1976,7 @@ async fn action_endpoint(
                 );
 
                 if user.id == *new_owner {
-                    info!("self giving attempted");
+                    debug!("self giving attempted");
 
                     return Ok(ActionResponse::Json(Json(json!({
                         "response_action": "errors",
@@ -2016,7 +2016,7 @@ async fn action_endpoint(
 
             match view.callback_id.as_str() {
                 "crafting_confirm_modal" => {
-                    info!("crafting confirm modal");
+                    debug!("crafting confirm modal");
 
                     let (tile_id, recipe_archetype_handle): (uuid::Uuid, config::ArchetypeHandle) =
                         serde_json::from_str(&view.private_metadata)
@@ -2045,7 +2045,7 @@ async fn action_endpoint(
                 .and_then(|s| s.as_str())
                 .and_then(|v| serde_json::from_str(v).ok())
             {
-                info!("planting seed!");
+                debug!("planting seed!");
                 let db = dyn_db();
                 let seed = Hacksteader::take(&db, Key::misc(seed_id))
                     .await
@@ -2088,7 +2088,7 @@ async fn action_endpoint(
                 .and_then(|s| s.as_str())
                 .and_then(|v| serde_json::from_str(v).ok())
             {
-                info!("applying item!");
+                debug!("applying item!");
 
                 to_farming
                     .send(FarmingInputEvent::ApplyItem(
@@ -2457,7 +2457,7 @@ async fn action_endpoint(
         }
         "crafting" | "crafting_next_page" | "crafting_back_page" => {
             use hcor::config::Recipe;
-            info!("crafting window");
+            debug!("crafting window");
 
             let (plant_id, steader, page): (uuid::Uuid, String, usize) =
                 serde_json::from_str(&action.value).unwrap();
@@ -3129,7 +3129,8 @@ pub struct ItemApplication {
 }
 
 fn setup_logger() -> Result<(), fern::InitError> {
-    fern::Dispatch::new()
+    let base_config = fern::Dispatch::new();
+    let debug_config = fern::Dispatch::new()
         .format(|out, msg, record| {
             out.finish(format_args!(
                 "{}[{}][{}] {}",
@@ -3139,10 +3140,25 @@ fn setup_logger() -> Result<(), fern::InitError> {
                 msg
             ))
         })
+        .level_for("gotchi", log::LevelFilter::Debug)
+        .chain(fern::log_file("debug.log")?);
+
+    let info_config = fern::Dispatch::new()
+        .format(|out, msg, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%y-%m-%d[%H:%M:%S]]"),
+                record.target(),
+                record.level(),
+                msg
+            ))
+        })
         .level(log::LevelFilter::Info)
+        .level_for("rocket", log::LevelFilter::Error)
         .chain(std::io::stdout())
-        .chain(fern::log_file("output.log")?)
-        .apply()?;
+        .chain(fern::log_file("output.log")?);
+
+    base_config.chain(debug_config).chain(info_config).apply()?;
 
     Ok(())
 }
@@ -3186,7 +3202,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                     use FarmingInputEvent::*;
                     match farming_event {
                         ActivateUser(name) => {
-                            info!("activated: {}", name);
+                            debug!("activated: {}", name);
                             active_users.insert(name, true);
                         }
                         ApplyItem(application, user_id) => {
@@ -3211,7 +3227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 }
 
                 interval.tick().await;
-                info!("update!");
+                debug!("update!");
 
                 if active_users.is_empty() {
                     info!("nobody on.");
@@ -3317,11 +3333,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                     }
                     if let Some(egg_id) = hatch_egg_queue.remove(&hs.user_id) {
-                        info!("egg hatch requested!");
+                        debug!("egg hatch requested!");
 
                         if let Some((p, hatch_table)) = hs.gotchis.iter().find_map(|g| {
                             Some(g).filter(|g| g.id == egg_id).and_then(|g| {
-                                info!("hatching {:?}", g);
+                                debug!("hatching {:?}", g);
                                 Some((g, g.inner.hatch_table.as_ref()?))
                             })
                         }) {
@@ -3439,7 +3455,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         .filter(|p| {
                                             let keep = rng.gen_range(0.0, 1.0) < craft_return_chance;
                                             if keep {
-                                                info!("mommy can we keep it? YES? YESSS");
+                                                debug!("mommy can we keep it? YES? YESSS");
                                                 dms.push((
                                                     steader.clone(),
                                                     vec![
@@ -3458,7 +3474,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         .collect()
                                 );
 
-                                info!("submitting craft");
+                                debug!("submitting craft");
                                 plant.craft = Some(hacksteader::Craft {
                                     until_finish: recipe.time,
                                     recipe_archetype_handle,
@@ -3592,7 +3608,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         if let Some(tokens) = plant_tokens.get_mut(&profile.id) {
                             *tokens = *tokens - 1;
                             if *tokens == 0 {
-                                info!("all plants finished for {}", profile.id);
+                                debug!("all plants finished for {}", profile.id);
                                 // we don't want to add the boosted_elapsed here, then your item effects
                                 // would have to be "paid for" later (your farm wouldn't work for however
                                 // much time the effect gave you).
@@ -3611,7 +3627,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }
                     }
 
-                    info!("elapsing {} cycles for {}", elapsed, profile.id);
+                    debug!("elapsing {} cycles for {}", elapsed, profile.id);
 
                     for _ in 0..elapsed {
                         plant.effects = plant
@@ -3622,7 +3638,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                     // decrement counter, remove if 0
                                     *uf = (*uf - 1.0).max(0.0);
                                     if *uf == 0.0 {
-                                        info!("removing effect: {:?}", e);
+                                        debug!("removing effect: {:?}", e);
                                         return None;
                                     }
                                 }
@@ -3637,7 +3653,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
                         let ticks = plant_sum.total_extra_time_ticks + 1;
                         let mut rng = rand::thread_rng();
-                        info!("triggering {} ticks for {}'s cycle", ticks, profile.id);
+                        debug!("triggering {} ticks for {}'s cycle", ticks, profile.id);
                         for _ in 0..ticks {
                             plant.craft = match plant
                                 .current_recipe_raw()
@@ -3670,9 +3686,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         if rng.gen_range(0.0, 1.0)
                                             < plant_sum.double_craft_yield_chance
                                         {
-                                            info!("cloning recipe output! {:?}", output);
+                                            debug!("cloning recipe output! {:?}", output);
                                             output.append(&mut output.clone());
-                                            info!("after clone: {:?}", output);
+                                            debug!("after clone: {:?}", output);
                                         }
                                         possessions.extend_from_slice(&output);
 
