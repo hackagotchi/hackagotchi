@@ -384,7 +384,7 @@ fn deploy_command<'a>(
 
 lazy_static::lazy_static! {
     pub static ref RESTART_SERVER: SpecialUserMessageTrigger = SpecialUserMessageTrigger {
-            regex: Regex::new("<@([A-z|0-9]+)> goblin chant").unwrap(),
+            regex: Regex::new("<@([A-z|0-9]+)> restart").unwrap(),
             then: &restart_command,
     };
 }
@@ -398,7 +398,7 @@ fn restart_command<'a>(
     async move {
         banker::message(match fs::write("restart", "restarting") {
             Ok(()) => "Scheduled a restart!".to_string(),
-            Err(e) => e.to_string(),
+            Err(e) => format!("Could not write `restart` file to trigger restart: {:?}", e),
         })
         .await?;
 
