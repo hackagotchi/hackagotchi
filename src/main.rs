@@ -3150,9 +3150,15 @@ fn setup_logger() -> Result<(), fern::InitError> {
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     use rocket_contrib::serve::StaticFiles;
+    use std::fs;
 
     dotenv::dotenv().ok();
     setup_logger()?;
+
+    if let Ok(_) = fs::read("restart") {
+        fs::remove_file("restart")?;
+        info!("Restarted!");
+    }
 
     info!("starting");
 
@@ -3937,6 +3943,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                         }),
                 )
                 .map_err(|e| error!("farm cycle async err: {}", e));
+
+                if let Ok(_) = fs::read("restart") {
+                    std::process::exit(0);
+                }
             }
         }
     });
