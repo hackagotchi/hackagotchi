@@ -375,7 +375,7 @@ fn deploy_command<'a>(
         let res_json = res
             .json::<BuildsResponse>()
             .await
-            .map_err(|_| "Invalid API Response")?;
+            .map_err(|e| format!("Invalid API Response: {:?}", e))?;
         banker::message(format!("Build submitted! URL: {}", res_json.setup_log)).await?;
         Ok(())
     }
