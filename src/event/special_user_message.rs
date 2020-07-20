@@ -330,7 +330,6 @@ fn deploy_command<'a>(
     _: Message,
     _: &'a Sender<FarmingInputEvent>,
 ) -> HandlerOutput<'a> {
-    use std::collections::HashMap;
     use std::fs;
     async move {
         let deploy_target = c
@@ -340,13 +339,11 @@ fn deploy_command<'a>(
             .to_string();
         let manifest = fs::read_to_string(format!("./manifests/{}.yml", deploy_target))
             .map_err(|_| "Invalid deploy target".to_string())?;
-        let mut json_request: HashMap<String, String> = HashMap::new();
-        json_request.insert("manifest".to_string(), manifest);
-        json_request.insert(
-            "note".to_string(),
-            "Submitted automatically by hackagotchi".to_string(),
-        );
-
+        let json_request = json!({
+            "manifest": manifest,
+            "note": "Submitted automatically by hackagotchi",
+            "execute": true
+        });
         let client = reqwest::Client::new();
         client
             .post("https://builds.sr.ht/api/jobs")
