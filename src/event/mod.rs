@@ -152,13 +152,15 @@ pub type InvoicePaymentTrigger = Trigger<&'static PaidInvoiceHandler>;
 pub type BankerMessageTrigger = Trigger<&'static CaptureHandler>;
 
 lazy_static::lazy_static! {
-    static ref SPECIAL_USER_MESSAGE_TRIGGERS: [&'static SpecialUserMessageTrigger; 6] = [
+    static ref SPECIAL_USER_MESSAGE_TRIGGERS: [&'static SpecialUserMessageTrigger; 8] = [
         &*special_user_message::SPAWN_COMMAND,
         &*special_user_message::GP_DUMP_COMMAND,
         &*special_user_message::STOMP_COMMAND,
         &*special_user_message::SLAUGHTER_COMMAND,
         &*special_user_message::NAB_COMMAND,
         &*special_user_message::YANK_CONFIG,
+        &*special_user_message::RESTART_SERVER,
+        &*special_user_message::DEPLOY_COMMAND,
     ];
     static ref INVOICE_PAYMENT_TRIGGERS: [&'static InvoicePaymentTrigger; 3] = [
         &*invoice_payment::HACKMARKET_FEES,
