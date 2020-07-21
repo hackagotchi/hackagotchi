@@ -3140,7 +3140,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
                 msg
             ))
         })
-        .level_for("gotchi", log::LevelFilter::Debug)
+        .level(log::LevelFilter::Debug)
         .chain(fern::log_file("debug.log")?);
 
     let info_config = fern::Dispatch::new()
@@ -3152,7 +3152,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
                 record.level(),
                 msg
             ))
-        }) 
+        })
         .level_for("rocket", log::LevelFilter::Error)
         .level_for("gotchi", log::LevelFilter::Info)
         .chain(std::io::stdout())
