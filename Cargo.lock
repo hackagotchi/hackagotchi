@@ -691,7 +691,7 @@ dependencies = [
 [[package]]
 name = "hcor"
 version = "1.2.2"
-source = "git+https://github.com/hackagotchi/hcor.git#0ef87c4ceaacc347dd50e631b91e3f2a6ef4ebde"
+source = "git+https://github.com/hackagotchi/hcor.git?tag=1.2.2#0ef87c4ceaacc347dd50e631b91e3f2a6ef4ebde"
 dependencies = [
  "derive_more",
  "dotenv",
