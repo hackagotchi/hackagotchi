@@ -44,10 +44,24 @@ use prelude::*;
 pub struct ChallengeEvent {
     challenge: String,
 }
-#[post("/event", format = "application/json", data = "<event_data>", rank = 2)]
-pub async fn challenge(event_data: Json<ChallengeEvent>) -> String {
+pub fn challenge(event_data: ChallengeEvent) -> String {
     info!("challenge");
     event_data.challenge.clone()
+}
+
+#[post("/event", format = "application/json", data = "<event_data>")]
+pub async fn event<'a>(
+    to_farming: State<'a, Sender<FarmingInputEvent>>,
+    event_data: Json<Value>
+) -> String {
+    if event_data.get("challenge").is_some() {
+        challenge(serde_json::from_value(event_data.clone()).unwrap())
+    } else {
+        non_challenge_event(to_farming, serde_json::from_value(event_data.clone()).unwrap())
+            .await
+            .err()
+            .unwrap_or_default()
+    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -66,14 +80,13 @@ pub struct Message {
     pub tab: Option<String>,
 }
 
-#[post("/event", format = "application/json", data = "<e>", rank = 1)]
-pub async fn non_challenge_event<'a, 'b>(
+pub async fn non_challenge_event<'a>(
     to_farming: State<'a, Sender<FarmingInputEvent>>,
-    e: Json<Event>,
+    e: Event,
 ) -> Result<(), String> {
     use super::banker::parse_paid_invoice;
 
-    let Event { event: r } = (*e).clone();
+    let Event { event: r } = e;
 
     let to_farming = (*to_farming).clone();
     rocket::tokio::spawn(async move {
