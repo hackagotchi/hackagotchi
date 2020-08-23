@@ -3980,8 +3980,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 action_endpoint,
                 egghatchwhen,
                 hgive,
-                event::challenge,
-                event::non_challenge_event,
+                event::event,
                 stateofsteading,
                 steadercount
             ],
