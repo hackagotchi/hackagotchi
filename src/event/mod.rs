@@ -52,15 +52,18 @@ pub fn challenge(event_data: ChallengeEvent) -> String {
 #[post("/event", format = "application/json", data = "<event_data>")]
 pub async fn event<'a>(
     to_farming: State<'a, Sender<FarmingInputEvent>>,
-    event_data: Json<Value>
+    event_data: Json<Value>,
 ) -> String {
     if event_data.get("challenge").is_some() {
         challenge(serde_json::from_value(event_data.clone()).unwrap())
     } else {
-        non_challenge_event(to_farming, serde_json::from_value(event_data.clone()).unwrap())
-            .await
-            .err()
-            .unwrap_or_default()
+        non_challenge_event(
+            to_farming,
+            serde_json::from_value(event_data.clone()).unwrap(),
+        )
+        .await
+        .err()
+        .unwrap_or_default()
     }
 }
 
