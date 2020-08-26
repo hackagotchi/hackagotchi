@@ -1487,7 +1487,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
         res("Well, I mean ... that's not really anything but ... ok")
     } else {
         let notif_msg = format!(
-            "<@{}> transferred {} {} {}!",
+            "<@{}> gave <@{}> {} {}!",
             user, receiver, amount, possession_archetype.name
         );
         let res_msg = json!({
@@ -3980,8 +3980,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 action_endpoint,
                 egghatchwhen,
                 hgive,
-                event::challenge,
-                event::non_challenge_event,
+                event::event,
                 stateofsteading,
                 steadercount
             ],
