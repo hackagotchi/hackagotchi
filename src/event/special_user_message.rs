@@ -333,11 +333,21 @@ struct BuildTask {
     pub status: String,
     pub log: String,
 }
+
+#[derive(Deserialize)]
+struct BuildOwner {
+    pub canonical_name: String,
+    pub name: String,
+}
 #[derive(Deserialize)]
 struct BuildsResponse {
     pub id: u32,
     pub status: String,
     pub setup_log: String,
+    pub tasks: Vec<BuildTask>,
+    pub note: String,
+    pub tags: String,
+    pub owner: BuildOwner,
 }
 fn deploy_command<'a>(
     c: regex::Captures<'a>,
