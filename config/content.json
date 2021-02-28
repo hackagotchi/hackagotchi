@@ -1,3 +1,21 @@
 {
-	"special_users": []
+  "special_users": [],
+  "profile_archetype": {
+    "advancements": {
+      "base": {
+        "kind": {
+          "land": 1,
+          "xp": 1000
+        },
+        "xp": 1000,
+        "art": "test",
+        "title": "title",
+        "description": "description",
+        "achiever_title": "achiever_title"
+      },
+      "rest": []
+    }
+  },
+  "plant_archetypes": [{}],
+  "possession_archetypes": [{}]
 }
