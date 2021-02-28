@@ -3,7 +3,7 @@ FROM golang:1.15
 
 RUN go get github.com/cespare/reflex
 
-FROM rust:1.49
+FROM rust:1.50
 
 COPY --from=0 /go/bin/reflex /bin/reflex
 
