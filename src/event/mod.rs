@@ -4,8 +4,8 @@ use crossbeam_channel::Sender;
 use regex::Regex;
 use rocket::{post, State};
 use rocket_contrib::json::Json;
-use std::future::Future;
 use std::pin::Pin;
+use std::{error::Error, future::Future};
 
 mod banker_message;
 mod invoice_payment;
@@ -102,6 +102,7 @@ pub async fn non_challenge_event<'a>(
             info!("Rendering app_home!");
             to_farming
                 .send(crate::FarmingInputEvent::ActivateUser(user_id.clone()))
+                .map_err(|v| v.to_string())
                 .expect("couldn't send active user");
             update_user_home_tab(user_id.clone())
                 .await
@@ -144,6 +145,8 @@ pub async fn non_challenge_event<'a>(
                         .unwrap_or_else(|e| error!("{}", e));
                 }
             }
+        } else {
+            println!("got random event");
         }
     });
 

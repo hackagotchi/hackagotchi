@@ -49,16 +49,14 @@ pub async fn message(msg: String) -> Result<(), String> {
 }
 
 pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String> {
-    // message(format!(
-    //     "<@{}> invoice <@{}> {} for {}",
-    //     *ID, user, amount, reason
-    // ))
-    // .await
-    // .map_err(|e| format!("Couldn't request invoice: {}", e))
-
     println!("Invoicing user {} for {} gp", user, amount);
 
-    Ok(())
+    message(format!(
+        "<@{}> invoice <@{}> {} for {}",
+        *ID, user, amount, reason
+    ))
+    .await
+    .map_err(|e| format!("Couldn't request invoice: {}", e))
 }
 
 pub async fn pay(user: String, amount: u64, reason: String) -> Result<(), String> {
