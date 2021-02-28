@@ -6,3 +6,5 @@
 .env
 
 *.log
+
+docker/

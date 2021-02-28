@@ -1,25 +1,20 @@
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 #![feature(decl_macro)]
 #![feature(proc_macro_hygiene)]
 #![feature(try_trait)]
 #![recursion_limit = "512"]
+
 use config::CONFIG;
 use crossbeam_channel::Sender;
-use hcor::config;
-use hcor::frontend::emojify;
-use hcor::possess;
-use hcor::{Category, Key};
+use hcor::{config, frontend::emojify, possess, Category, Key};
 use log::*;
 use possess::{Possessed, Possession};
 use regex::Regex;
-use rocket::request::LenientForm;
-use rocket::tokio;
-use rocket::{post, routes, FromForm, State};
+use rocket::{post, request::LenientForm, routes, FromForm, State};
 use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::convert::TryInto;
+use std::{collections::HashMap, convert::TryInto};
 
 pub mod banker;
 pub mod event;
@@ -32,7 +27,7 @@ pub fn dyn_db() -> DynamoDbClient {
     DynamoDbClient::new(if *LOCAL_DB {
         rusoto_core::Region::Custom {
             name: "local".to_string(),
-            endpoint: "http://localhost:8000".to_string(),
+            endpoint: "http://dynamodb-local:8000".to_string(),
         }
     } else {
         rusoto_core::Region::UsEast1
@@ -1027,7 +1022,7 @@ fn hackstead_blocks(
             .as_ref()
             .filter(|cert| {
                 if cert.requires_xp {
-                    tiles_owned < hs_adv_sum.land.try_into().unwrap()
+                    tiles_owned < hs_adv_sum.land as usize
                 } else {
                     true
                 }
@@ -1518,7 +1513,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
             "text": notif_msg
         });
 
-        tokio::spawn(async move {
+        rocket::tokio::spawn(async move {
             debug!("I mean this happens?");
 
             let _ = gift_dm(
@@ -1584,7 +1579,7 @@ async fn egghatchwhen<'a>(
                 "Can't open one of your eggs; ",
                 "you don't have a hackstead! ",
                 "try /hstead to get started!"
-            ))
+            ));
         }
     };
 
@@ -3183,9 +3178,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     let (tx, rx) = crossbeam_channel::unbounded();
 
-    tokio::task::spawn({
+    rocket::tokio::task::spawn({
+        use rocket::tokio::time::interval;
         use std::time::{Duration, SystemTime};
-        use tokio::time::interval;
 
         let mut interval = interval(Duration::from_millis(FARM_CYCLE_MILLIS));
 
