@@ -15,4 +15,4 @@ RUN rustup toolchain install nightly
 
 RUN cargo fetch
 
-CMD ["reflex", "-r", ".rs$", "-r", ".json$", "-R", "target/", "-s", "--", "rustup", "run", "nightly", "cargo", "run"]
+CMD ["reflex", "-r", ".(rs|json)$", "-R", "target/", "-s", "--", "rustup", "run", "nightly", "cargo", "run"]

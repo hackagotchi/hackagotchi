@@ -145,8 +145,6 @@ pub async fn non_challenge_event<'a>(
                         .unwrap_or_else(|e| error!("{}", e));
                 }
             }
-        } else {
-            println!("got random event");
         }
     });
 
