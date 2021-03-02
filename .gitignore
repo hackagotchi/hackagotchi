@@ -10,3 +10,6 @@
 docker/
 
 hackagotchi_logs
+
+config/content.json
+config/special_users.json
