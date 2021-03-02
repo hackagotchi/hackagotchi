@@ -4,8 +4,8 @@ use crossbeam_channel::Sender;
 use regex::Regex;
 use rocket::{post, State};
 use rocket_contrib::json::Json;
-use std::future::Future;
 use std::pin::Pin;
+use std::{error::Error, future::Future};
 
 mod banker_message;
 mod invoice_payment;
@@ -52,15 +52,18 @@ pub fn challenge(event_data: ChallengeEvent) -> String {
 #[post("/event", format = "application/json", data = "<event_data>")]
 pub async fn event<'a>(
     to_farming: State<'a, Sender<FarmingInputEvent>>,
-    event_data: Json<Value>
+    event_data: Json<Value>,
 ) -> String {
     if event_data.get("challenge").is_some() {
         challenge(serde_json::from_value(event_data.clone()).unwrap())
     } else {
-        non_challenge_event(to_farming, serde_json::from_value(event_data.clone()).unwrap())
-            .await
-            .err()
-            .unwrap_or_default()
+        non_challenge_event(
+            to_farming,
+            serde_json::from_value(event_data.clone()).unwrap(),
+        )
+        .await
+        .err()
+        .unwrap_or_default()
     }
 }
 
@@ -99,6 +102,7 @@ pub async fn non_challenge_event<'a>(
             info!("Rendering app_home!");
             to_farming
                 .send(crate::FarmingInputEvent::ActivateUser(user_id.clone()))
+                .map_err(|v| v.to_string())
                 .expect("couldn't send active user");
             update_user_home_tab(user_id.clone())
                 .await

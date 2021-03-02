@@ -1,3 +1,4 @@
 [global]
 port = 80
 log = "normal"
+address = "0.0.0.0"

@@ -1,0 +1,38 @@
+version: "3.8"
+services:
+  main:
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    volumes:
+      - ".:/usr/src/app"
+    ports:
+      - "3000:80"
+    env_file: .env
+    environment:
+      HACKSTEAD_PRICE: "5"
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      LOCAL_DB: "true"
+  dynamodb-local:
+    command: "-jar DynamoDBLocal.jar -sharedDb -optimizeDbBeforeStartup -dbPath ./data"
+    image: "amazon/dynamodb-local:latest"
+    container_name: dynamodb-local
+    ports:
+      - "8000:8000"
+    volumes:
+      - "./docker/dynamodb:/home/dynamodblocal/data"
+    working_dir: /home/dynamodblocal
+  dynamodb-admin:
+    image: "aaronshaf/dynamodb-admin"
+    environment:
+      DYNAMO_ENDPOINT: http://dynamodb-local:8000
+    ports:
+      - "8001:8001"
+  ngrok:
+    image: wernight/ngrok
+    env_file: .ngrok.env
+    environment:
+      NGROK_PORT: main:80
+    ports:
+      - "3001:4040"
