@@ -1,5 +1,8 @@
-use crate::{event::Message, TOKEN};
+use crate::{event::Message, ID as BOT_ID, TOKEN};
 use regex::Regex;
+
+use graphql_client::{GraphQLQuery, QueryBody, Response};
+use serde::de::DeserializeOwned;
 
 #[derive(Debug, Clone)]
 pub struct PaidInvoice {
@@ -8,6 +11,13 @@ pub struct PaidInvoice {
     pub invoicee: String,
     pub reason: String,
 }
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "hn/schema.json",
+    query_path = "hn/create_transaction.graphql"
+)]
+pub struct CreateTransaction;
 
 use std::env::var;
 lazy_static::lazy_static! {
@@ -48,13 +58,34 @@ pub async fn message(msg: String) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn do_query<T: serde::ser::Serialize, U: serde::de::DeserializeOwned>(
+    query: &T,
+) -> Result<Response<U>, ()> {
+    let client = reqwest::Client::new();
+    let mut res = client
+        .post("https://hn.rishi.cx")
+        .json(query)
+        .send()
+        .await
+        .map_err(|_| ())?;
+    let response_body: Response<U> = res.json().await.map_err(|_| ())?;
+
+    Ok(response_body)
+}
+
 pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String> {
-    message(format!(
-        "<@{}> invoice <@{}> {} for {}",
-        *ID, user, amount, reason
-    ))
-    .await
-    .map_err(|e| format!("Couldn't request invoice: {}", e))
+    let query = CreateTransaction::build_query(create_transaction::Variables {
+        to: BOT_ID.to_string(),
+        from: user.to_string(),
+        balance: amount as f64,
+        reason: Some(reason.to_string()),
+    });
+
+    do_query::<_, create_transaction::ResponseData>(&query)
+        .await
+        .map_err(|_| String::from("something bad happened"))?;
+
+    Ok(())
 }
 
 pub async fn pay(user: String, amount: u64, reason: String) -> Result<(), String> {

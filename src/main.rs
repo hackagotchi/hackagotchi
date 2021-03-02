@@ -10,7 +10,7 @@ use hcor::{config, frontend::emojify, possess, Category, Key};
 use log::*;
 use possess::{Possessed, Possession};
 use regex::Regex;
-use rocket::{post, request::LenientForm, routes, FromForm, State};
+use rocket::{get, post, request::LenientForm, routes, FromForm, State};
 use rocket_contrib::json::Json;
 use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
@@ -19,7 +19,10 @@ use std::{collections::HashMap, convert::TryInto};
 pub mod banker;
 pub mod event;
 pub mod hacksteader;
+mod hn_webhook;
 pub mod market;
+
+use hn_webhook::{payment, transaction};
 
 use hacksteader::Hacksteader;
 
@@ -3970,6 +3973,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         .mount(
             "/gotchi",
             routes![
+                transaction,
+                payment,
                 hackstead,
                 hackmarket,
                 action_endpoint,
