@@ -30,7 +30,7 @@ pub fn dyn_db() -> DynamoDbClient {
             endpoint: "http://dynamodb-local:8000".to_string(),
         }
     } else {
-        rusoto_core::Region::UsEast1
+        rusoto_core::Region::UsWest2
     })
 }
 
