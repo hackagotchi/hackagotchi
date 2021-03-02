@@ -7,7 +7,7 @@ services:
     volumes:
       - ".:/usr/src/app"
     ports:
-      - "3000:3000"
+      - "3000:80"
     env_file: .env
     environment:
       HACKSTEAD_PRICE: "5"
@@ -33,6 +33,6 @@ services:
     image: wernight/ngrok
     env_file: .ngrok.env
     environment:
-      NGROK_PORT: main:3000
+      NGROK_PORT: main:80
     ports:
       - "3001:4040"
