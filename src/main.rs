@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![warn(missing_docs)]
 #![feature(decl_macro)]
 #![feature(proc_macro_hygiene)]
 #![feature(try_trait)]

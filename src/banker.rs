@@ -49,8 +49,6 @@ pub async fn message(msg: String) -> Result<(), String> {
 }
 
 pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String> {
-    println!("Invoicing user {} for {} gp", user, amount);
-
     message(format!(
         "<@{}> invoice <@{}> {} for {}",
         *ID, user, amount, reason
