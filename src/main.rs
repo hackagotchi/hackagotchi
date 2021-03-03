@@ -1106,12 +1106,13 @@ macro_rules! hacksteader_opening_blurb { () => { format!(
 :money_with_wings: *Buy and barter* with other Hack Clubbers on a *real-time market*!
 
 
-_Hacksteading is *free*!_
+_Hacksteading costs *{}* HN to get started._
 
 Each Hacksteader starts off with a :dirt: *single plot of land* to grow crops \
 and a :nest_egg: *Nest Egg* to get started! \
 Grow your Hacksteading empire by starting today!
 ",
+HACKSTEAD_PRICE.to_string()
 ) } }
 
 fn hackstead_explanation_blocks() -> Vec<Value> {
@@ -2121,12 +2122,27 @@ async fn action_endpoint(
         "hackstead_confirm" => {
             info!("confirming new user!");
             if !hacksteader::exists(&dyn_db(), i.user.id.clone()).await {
-                banker::invoice(&i.user.id, *HACKSTEAD_PRICE, "let's hackstead, fred!")
-                    .await
-                    .map_err(|e| format!("couldn't send Banker invoice DM: {}", e))?;
-            }
+                let transaction_id =
+                    banker::invoice(&i.user.id, *HACKSTEAD_PRICE, "let's hackstead, fred!")
+                        .await
+                        .map_err(|e| format!("couldn't send Banker invoice DM: {}", e))?;
 
-            mrkdwn("Check your DMs from Banker for the hacksteading invoice!")
+                Modal {
+                    method: "open".to_string(),
+                    trigger_id: i.trigger_id,
+                    callback_id: "blah".to_string(),
+                    title: "Almost there...".to_string(),
+                    blocks: vec![
+                        json!({
+                            "type": "section",
+                            "text": mrkdwn(&format!("You're almost there! Just run `/pay {}` in any public channel to pay the invoice!", transaction_id))
+                        }),
+                    ],
+                    ..Default::default()
+                }.launch().await?
+            } else {
+                mrkdwn("you're already signed up!")
+            }
         }
         "possession_sell" => {
             let page_json = i.view.ok_or("no view!".to_string())?.private_metadata;

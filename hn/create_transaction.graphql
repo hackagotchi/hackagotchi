@@ -4,7 +4,7 @@ mutation CreateTransaction(
   $balance: Float!
   $reason: String
 ) {
-  transact(to: $to, from: $from, balance: $balance, for: $reason) {
+  transact(data: { to: $to, from: $from, balance: $balance, for: $reason }) {
     id
   }
 }

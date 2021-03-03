@@ -1,4 +1,5 @@
 use crate::{event::Message, ID as BOT_ID, TOKEN};
+use log::{debug, info};
 use regex::Regex;
 
 use graphql_client::{GraphQLQuery, QueryBody, Response};
@@ -23,6 +24,7 @@ use std::env::var;
 lazy_static::lazy_static! {
     pub static ref ID: String = var("BANKER_ID").unwrap();
     pub static ref CHAT_ID: String = var("BANKER_CHAT").unwrap();
+    pub static ref HN_TOKEN: String = var("HN_TOKEN").unwrap();
     static ref PAID_INVOICE_MSG_REGEX: Regex = Regex::new(
         "<@([A-z|0-9]+)> paid their invoice of ([0-9]+) gp from <@([A-z|0-9]+)> for \"(.+)\"."
     ).unwrap();
@@ -65,6 +67,7 @@ pub async fn do_query<T: serde::ser::Serialize, U: serde::de::DeserializeOwned>(
     let mut res = client
         .post("https://hn.rishi.cx")
         .json(query)
+        .bearer_auth(HN_TOKEN.to_string())
         .send()
         .await
         .map_err(|_| ())?;
@@ -73,7 +76,7 @@ pub async fn do_query<T: serde::ser::Serialize, U: serde::de::DeserializeOwned>(
     Ok(response_body)
 }
 
-pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String> {
+pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<String, String> {
     let query = CreateTransaction::build_query(create_transaction::Variables {
         to: BOT_ID.to_string(),
         from: user.to_string(),
@@ -81,11 +84,13 @@ pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<(), String
         reason: Some(reason.to_string()),
     });
 
-    do_query::<_, create_transaction::ResponseData>(&query)
+    let result = do_query::<_, create_transaction::ResponseData>(&query)
         .await
-        .map_err(|_| String::from("something bad happened"))?;
+        .map_err(|_| String::from("something bad happened"))?
+        .data
+        .ok_or(String::from("something bad happened"))?;
 
-    Ok(())
+    Ok(result.transact.id)
 }
 
 pub async fn pay(user: String, amount: u64, reason: String) -> Result<(), String> {
