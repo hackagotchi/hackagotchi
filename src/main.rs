@@ -409,7 +409,7 @@ impl PossessionOverviewPage {
                         if let Some(hcor::market::Sale { price, .. }) = possession.sale {
                             match source {
                                 PossessionOverviewSource::Hacksteader(..) => {
-                                    format!(" (selling at *{}gp*)", price)
+                                    format!(" (selling at *{}hn*)", price)
                                 },
                                 PossessionOverviewSource::Market(..) => {
                                     format!(
@@ -427,7 +427,7 @@ impl PossessionOverviewPage {
                         "style": "primary",
                         "text": plain_text(match (source, possession.sale.as_ref()) {
                             (PossessionOverviewSource::Market(..), Some(s)) => {
-                                format!("{}gp", s.price)
+                                format!("{}hn", s.price)
                             }
                             _ => item_name.clone(),
                         }),
@@ -542,7 +542,7 @@ impl PossessionPage {
         {
             match self.credentials {
                 Credentials::Owner => return Some("Take off Market".to_string()),
-                Credentials::Hacksteader => return Some(format!("Buy for {} gp", sale.price)),
+                Credentials::Hacksteader => return Some(format!("Buy for {} hn", sale.price)),
                 _ => {}
             }
         }
@@ -658,7 +658,7 @@ impl PossessionPage {
 
             for owner in g.harvest_log.iter().rev() {
                 blocks.push(comment(format!(
-                    "{}gp harvested for <@{}>",
+                    "{}hn harvested for <@{}>",
                     owner.harvested, owner.id
                 )));
             }
@@ -1204,9 +1204,9 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
     let entry_count = entries.len();
     std::iter::once(comment(format!(
         concat!(
-            "Your *{}* goods cost *{}gp* in total, ",
+            "Your *{}* goods cost *{}hn* in total, ",
             "*{}%* of the market's ",
-            "_{}gp_ value across _{}_ items.",
+            "_{}hn_ value across _{}_ items.",
         ),
         your_goods_count,
         your_goods_price,
@@ -1231,7 +1231,7 @@ async fn hackmarket_blocks(cat: Category, viewer: String) -> Vec<Value> {
                         "type": "button",
                         "style": "primary",
                         "text": plain_text(format!(
-                            "{} for sale starting at {}gp",
+                            "{} for sale starting at {}hn",
                             count,
                             lowest_price
                         )),
@@ -1866,7 +1866,7 @@ async fn action_endpoint(
                             &user.id,
                             sale.price,
                             &format!(
-                                "hackmarket purchase buying {} at {}gp :{}:{} from <@{}>",
+                                "hackmarket purchase buying {} at {}hn :{}:{} from <@{}>",
                                 possession.name,
                                 sale.price,
                                 key.id,
@@ -1954,7 +1954,7 @@ async fn action_endpoint(
                     &user.id,
                     price / 20_u64,
                     &format!(
-                        "hackmarket fees for selling {} at {}gp :{}:{}",
+                        "hackmarket fees for selling {} at {}hn :{}:{}",
                         possession.name,
                         price,
                         possession.id,
@@ -2147,7 +2147,7 @@ async fn action_endpoint(
                     json!({
                         "type": "input",
                         "block_id": "possession_sell_price_block",
-                        "label": plain_text("Price (gp)"),
+                        "label": plain_text("Price (hn)"),
                         "element": {
                             "type": "plain_text_input",
                             "action_id": "possession_sell_price_input",
@@ -2159,7 +2159,7 @@ async fn action_endpoint(
                     comment("As a form of confirmation, you'll get an invoice to pay before your Item goes up on the market. \
                         To fund Harvests and to encourage Hacksteaders to keep prices sensible, \
                         this invoice is 5% of the price of your sale \
-                        rounded down to the nearest GP (meaning that sales below 20gp aren't taxed at all)."),
+                        rounded down to the nearest GP (meaning that sales below 20hn aren't taxed at all)."),
                 ],
                 submit: Some("Sell!".to_string()),
                 ..Default::default()

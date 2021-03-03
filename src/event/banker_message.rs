@@ -3,7 +3,7 @@ use super::BankerMessageTrigger;
 
 lazy_static::lazy_static! {
     pub static ref BANKER_BALANCE: BankerMessageTrigger = BankerMessageTrigger {
-        regex: Regex::new("You have ([0-9]+)gp in your account, hackalacker.").unwrap(),
+        regex: Regex::new("You have ([0-9]+)hn in your account, hackalacker.").unwrap(),
         then: &banker_balance
     };
 }
@@ -16,7 +16,7 @@ fn banker_balance<'a>(
 
         let balance = c
             .get(1)
-            .ok_or_else(|| "no gp amount".to_string())?
+            .ok_or_else(|| "no hn amount".to_string())?
             .as_str()
             .parse::<u64>()
             .map_err(|e| format!("error parsing number in banker balance msg: {}", e))?;

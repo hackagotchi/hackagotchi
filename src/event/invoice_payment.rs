@@ -44,7 +44,7 @@ impl Sale {
 
 lazy_static::lazy_static! {
     pub static ref HACKMARKET_FEES: InvoicePaymentTrigger = InvoicePaymentTrigger {
-        regex: Regex::new("hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])").unwrap(),
+        regex: Regex::new("hackmarket fees for selling (.+) at ([0-9]+)hn :(.+):([0-9])").unwrap(),
         then: &hackmarket_fees
     };
 }
@@ -110,12 +110,12 @@ fn hackmarket_fees<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to sell for {}gp is no longer on the market{}"
+                                "The {} you tried to sell for {}hn is no longer on the market{}"
                             ),
                             name,
                             price,
                             if price >= 20 {
-                                format!(", so your {}gp market fee has been refunded.", price/20)
+                                format!(", so your {}hn market fee has been refunded.", price/20)
                             } else {
                                 ".".to_string()
                             }
@@ -135,7 +135,7 @@ fn hackmarket_fees<'a>(
 
 lazy_static::lazy_static! {
     pub static ref HACKMARKET_PURCHASE: InvoicePaymentTrigger = InvoicePaymentTrigger {
-        regex: Regex::new("hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9]) from <@([A-z|0-9]+)>").unwrap(),
+        regex: Regex::new("hackmarket purchase buying (.+) at ([0-9]+)hn :(.+):([0-9]) from <@([A-z|0-9]+)>").unwrap(),
         then: &hackmarket_purchase
     };
 }
@@ -172,7 +172,7 @@ fn hackmarket_purchase<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to buy for {}gp is no longer on the market, ",
+                                "The {} you tried to buy for {}hn is no longer on the market, ",
                                 "so your GP has been refunded."
                             ),
                             name,
@@ -247,7 +247,7 @@ fn hackmarket_purchase<'a>(
                 ]),
                 dm_blocks(
                     seller.clone(),
-                    format!("Your sale went through! You earned {} gp.", price).to_string(),
+                    format!("Your sale went through! You earned {} hn.", price).to_string(),
                     vec![
                     json!({
                         "type": "section",
