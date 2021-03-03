@@ -4,6 +4,7 @@ use regex::Regex;
 
 use graphql_client::{GraphQLQuery, QueryBody, Response};
 use serde::de::DeserializeOwned;
+use serde_json::json;
 
 #[derive(Debug, Clone)]
 pub struct PaidInvoice {
@@ -89,6 +90,13 @@ pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<String, St
         .map_err(|_| String::from("something bad happened"))?
         .data
         .ok_or(String::from("something bad happened"))?;
+
+    crate::dm_blocks(user.to_string(), format!("I've just invoiced you for {} HN! Type `/pay {}` in the chat below to confirm.", amount, result.transact.id), vec![
+        json!({
+            "type": "section",
+            "text": crate::mrkdwn(format!("I've just invoiced you for {} HN! Type `/pay {}` in the chat below to confirm.", amount, result.transact.id))
+        })
+    ]).await?;
 
     Ok(result.transact.id)
 }

@@ -1133,9 +1133,9 @@ fn hackstead_explanation_blocks() -> Vec<Value> {
                     "title": plain_text("Let's Hackstead, Fred!"),
                     "text": mrkdwn(
                          "(P.S. once you click that button, \
-                         expect a direct message from banker on what to do next!)"
+                         expect a direct message on what to do next!)"
                     ),
-                    "deny": plain_text("I'm short on GP"),
+                    "deny": plain_text("I'm short on HN"),
                     "confirm": plain_text("LET'S HACKSTEAD, FRED!"),
                 }
             }]
@@ -2127,19 +2127,7 @@ async fn action_endpoint(
                         .await
                         .map_err(|e| format!("couldn't send Banker invoice DM: {}", e))?;
 
-                Modal {
-                    method: "open".to_string(),
-                    trigger_id: i.trigger_id,
-                    callback_id: "blah".to_string(),
-                    title: "Almost there...".to_string(),
-                    blocks: vec![
-                        json!({
-                            "type": "section",
-                            "text": mrkdwn(&format!("You're almost there! Just run `/pay {}` in any public channel to pay the invoice!", transaction_id))
-                        }),
-                    ],
-                    ..Default::default()
-                }.launch().await?
+                json!({})
             } else {
                 mrkdwn("you're already signed up!")
             }
