@@ -20,6 +20,14 @@ use crate::event::INVOICE_PAYMENT_TRIGGERS;
 pub struct GetTransaction;
 
 #[derive(Deserialize, Debug)]
+pub enum HnWebhookType {
+    #[serde(rename = "payment")]
+    Payment,
+
+    #[serde(rename = "transaction")]
+    Transaction,
+}
+#[derive(Deserialize, Debug)]
 pub struct HnWebhook {
     body: HnWebhookBody,
     timeout: u32,
@@ -28,7 +36,7 @@ pub struct HnWebhook {
 #[derive(Deserialize, Debug)]
 pub struct HnWebhookBody {
     #[serde(rename = "type")]
-    webhook_type: String,
+    webhook_type: HnWebhookType,
 
     id: String,
 }
