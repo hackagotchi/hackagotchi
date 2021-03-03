@@ -87,8 +87,6 @@ pub async fn non_challenge_event<'a>(
     to_farming: State<'a, Sender<FarmingInputEvent>>,
     e: Event,
 ) -> Result<(), String> {
-    use super::banker::parse_paid_invoice;
-
     let Event { event: r } = e;
 
     let to_farming = (*to_farming).clone();
@@ -107,20 +105,6 @@ pub async fn non_challenge_event<'a>(
             update_user_home_tab(user_id.clone())
                 .await
                 .unwrap_or_else(|e| error!("{}", e));
-        } else if let Some(ref pi) = parse_paid_invoice(&r).filter(|p| p.invoicer == *ID) {
-            info!("invoice {:#?} just paid", pi);
-
-            for InvoicePaymentTrigger { regex, then } in INVOICE_PAYMENT_TRIGGERS.iter() {
-                let c = match regex.captures(&pi.reason) {
-                    Some(c) => c,
-                    None => continue,
-                };
-                if let Err(e) = then(c, pi.clone()).await {
-                    banker::message(format!("invoice payment handler err : {}", e))
-                        .await
-                        .unwrap_or_else(|e| error!("{}", e));
-                }
-            }
         } else if hcor::config::CONFIG.special_users.contains(&r.user_id) {
             for SpecialUserMessageTrigger { regex, then } in SPECIAL_USER_MESSAGE_TRIGGERS.iter() {
                 let c = match regex.captures(&r.text) {
