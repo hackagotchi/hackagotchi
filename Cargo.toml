@@ -12,7 +12,7 @@ crossbeam-channel = "0.4.2"
 dotenv = "0.15.0"
 fern = "0.6"
 futures = {version = "0.3.4", features = ["compat"]}
-hcor = {git = "https://github.com/cjdenio/hcor.git"}
+hcor = {git = "https://github.com/hackagotchi/hcor.git"}
 humantime = "2.0.0"
 lazy_static = "1.4.0"
 log = "0.4.8"
