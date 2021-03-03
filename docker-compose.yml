@@ -14,21 +14,19 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       LOCAL_DB: "true"
-  dynamodb-local:
-    command: "-jar DynamoDBLocal.jar -sharedDb -optimizeDbBeforeStartup -dbPath ./data"
-    image: "amazon/dynamodb-local:latest"
-    container_name: dynamodb-local
-    ports:
-      - "8000:8000"
-    volumes:
-      - "./docker/dynamodb:/home/dynamodblocal/data"
-    working_dir: /home/dynamodblocal
-  dynamodb-admin:
-    image: "aaronshaf/dynamodb-admin"
+
+  db:
+    image: postgres:alpine
+    restart: always
     environment:
-      DYNAMO_ENDPOINT: http://dynamodb-local:8000
+      POSTGRES_PASSWORD: "adorpheus"
+      POSTGRES_USER: "farquit"
+      POSTGRES_DB: "testagotchi"
+  adminer:
+    image: adminer
+    restart: always
     ports:
-      - "8001:8001"
+      - "8080:8080"
   ngrok:
     image: wernight/ngrok
     env_file: .ngrok.env

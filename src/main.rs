@@ -12,7 +12,6 @@ use possess::{Possessed, Possession};
 use regex::Regex;
 use rocket::{post, request::LenientForm, routes, FromForm, State};
 use rocket_contrib::json::Json;
-use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient};
 use serde_json::{json, Value};
 use std::{collections::HashMap, convert::TryInto};
 
@@ -23,16 +22,6 @@ pub mod market;
 
 use hacksteader::Hacksteader;
 
-pub fn dyn_db() -> DynamoDbClient {
-    DynamoDbClient::new(if *LOCAL_DB {
-        rusoto_core::Region::Custom {
-            name: "local".to_string(),
-            endpoint: "http://dynamodb-local:8000".to_string(),
-        }
-    } else {
-        rusoto_core::Region::UsWest2
-    })
-}
 
 const FARM_CYCLE_SECS: u64 = 5;
 const FARM_CYCLE_MILLIS: u64 = FARM_CYCLE_SECS * 1000;
