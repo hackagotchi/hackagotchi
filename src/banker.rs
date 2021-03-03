@@ -1,4 +1,4 @@
-use crate::{event::Message, ID as BOT_ID, TOKEN};
+use crate::{dm_blocks, event::Message, mrkdwn, ID as BOT_ID, TOKEN};
 use log::{debug, info};
 use regex::Regex;
 
@@ -20,6 +20,10 @@ pub struct PaidInvoice {
     query_path = "hn/create_transaction.graphql"
 )]
 pub struct CreateTransaction;
+
+#[derive(GraphQLQuery)]
+#[graphql(schema_path = "hn/schema.json", query_path = "hn/pay.graphql")]
+pub struct Pay;
 
 use std::env::var;
 lazy_static::lazy_static! {
@@ -50,7 +54,7 @@ pub async fn do_query<T: serde::ser::Serialize, U: serde::de::DeserializeOwned>(
     let mut res = client
         .post("https://hn.rishi.cx")
         .json(query)
-        .bearer_auth(HN_TOKEN.to_string())
+        .header("secret", HN_TOKEN.to_string())
         .send()
         .await
         .map_err(|_| ())?;
@@ -73,10 +77,10 @@ pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<String, St
         .data
         .ok_or(String::from("something bad happened"))?;
 
-    crate::dm_blocks(user.to_string(), format!("I've just invoiced you for {} HN! Type `/pay {}` in the chat below to confirm.", amount, result.transact.id), vec![
+    dm_blocks(user.to_string(), format!("I've just invoiced you {} HN for \"{}\". Type `/pay {}` in the chat below to confirm.", amount, reason, result.transact.id), vec![
         json!({
             "type": "section",
-            "text": crate::mrkdwn(format!("I've just invoiced you for {} HN! Type `/pay {}` in the chat below to confirm.", amount, result.transact.id))
+            "text": mrkdwn(format!("I've just invoiced you {} HN for \"{}\". Type `/pay {}` in the chat below to confirm.", amount, reason, result.transact.id))
         })
     ]).await?;
 
@@ -84,12 +88,30 @@ pub async fn invoice(user: &str, amount: u64, reason: &str) -> Result<String, St
 }
 
 pub async fn pay(user: String, amount: u64, reason: String) -> Result<(), String> {
-    message(format!(
-        "<@{}> give <@{}> {} for {}",
-        *ID, user, amount, reason
-    ))
-    .await
-    .map_err(|e| format!("Couldn't complete payment: {}", e))
+    let query = Pay::build_query(pay::Variables {
+        to: user.clone(),
+        from: BOT_ID.to_string(),
+        amount: amount.clone() as f64,
+        reason: Some(reason.clone()),
+    });
+
+    let result = do_query::<_, pay::ResponseData>(&query)
+        .await
+        .expect("something bad happened")
+        .data
+        .expect("something bad happened");
+
+    dm_blocks(
+        user.to_string(),
+        format!("I've just sent you {} HN for \"{}\"!", amount, reason),
+        vec![json!({
+            "type": "section",
+            "text": mrkdwn(format!("I've just sent you {} HN for \"{}\"!", amount, reason))
+        })],
+    )
+    .await?;
+
+    Ok(())
 }
 
 pub async fn balance() -> Result<(), String> {
