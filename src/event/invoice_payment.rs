@@ -50,7 +50,6 @@ lazy_static::lazy_static! {
 }
 fn hackmarket_fees<'a>(
     c: regex::Captures<'a>,
-    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
@@ -142,7 +141,6 @@ lazy_static::lazy_static! {
 }
 fn hackmarket_purchase<'a>(
     c: regex::Captures<'a>,
-    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
@@ -286,7 +284,6 @@ lazy_static::lazy_static! {
 }
 fn start_hackstead_invoice_payment<'a>(
     _: regex::Captures<'a>,
-    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {

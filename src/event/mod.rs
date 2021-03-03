@@ -115,7 +115,7 @@ pub async fn non_challenge_event<'a>(
                     Some(c) => c,
                     None => continue,
                 };
-                if let Err(e) = then(c, r.clone(), pi.clone()).await {
+                if let Err(e) = then(c, pi.clone()).await {
                     banker::message(format!("invoice payment handler err : {}", e))
                         .await
                         .unwrap_or_else(|e| error!("{}", e));
@@ -156,20 +156,20 @@ pub type CaptureHandler = dyn for<'a> Fn(regex::Captures<'a>, Message, &'a Sende
     + 'static
     + Sync
     + Send;
-pub type PaidInvoiceHandler = dyn for<'a> Fn(regex::Captures<'a>, Message, banker::PaidInvoice) -> HandlerOutput<'a>
+pub type PaidInvoiceHandler = dyn for<'a> Fn(regex::Captures<'a>, banker::PaidInvoice) -> HandlerOutput<'a>
     + 'static
     + Sync
     + Send;
 pub struct Trigger<T> {
-    regex: Regex,
-    then: T,
+    pub regex: Regex,
+    pub then: T,
 }
 pub type SpecialUserMessageTrigger = Trigger<&'static CaptureHandler>;
 pub type InvoicePaymentTrigger = Trigger<&'static PaidInvoiceHandler>;
 pub type BankerMessageTrigger = Trigger<&'static CaptureHandler>;
 
 lazy_static::lazy_static! {
-    static ref SPECIAL_USER_MESSAGE_TRIGGERS: [&'static SpecialUserMessageTrigger; 8] = [
+    pub static ref SPECIAL_USER_MESSAGE_TRIGGERS: [&'static SpecialUserMessageTrigger; 8] = [
         &*special_user_message::SPAWN_COMMAND,
         &*special_user_message::GP_DUMP_COMMAND,
         &*special_user_message::STOMP_COMMAND,
@@ -179,12 +179,12 @@ lazy_static::lazy_static! {
         &*special_user_message::RESTART_SERVER,
         &*special_user_message::DEPLOY_COMMAND,
     ];
-    static ref INVOICE_PAYMENT_TRIGGERS: [&'static InvoicePaymentTrigger; 3] = [
+    pub static ref INVOICE_PAYMENT_TRIGGERS: [&'static InvoicePaymentTrigger; 3] = [
         &*invoice_payment::HACKMARKET_FEES,
         &*invoice_payment::HACKMARKET_PURCHASE,
         &*invoice_payment::START_HACKSTEAD_INVOICE_PAYMENT,
     ];
-    static ref BANKER_MESSAGE_TRIGGERS: [&'static BankerMessageTrigger; 1] = [
+    pub static ref BANKER_MESSAGE_TRIGGERS: [&'static BankerMessageTrigger; 1] = [
         &*banker_message::BANKER_BALANCE,
     ];
 }
