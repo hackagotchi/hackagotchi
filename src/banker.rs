@@ -25,9 +25,12 @@ pub struct CreateTransaction;
 #[graphql(schema_path = "hn/schema.json", query_path = "hn/pay.graphql")]
 pub struct Pay;
 
+#[derive(GraphQLQuery)]
+#[graphql(schema_path = "hn/schema.json", query_path = "hn/get_balance.graphql")]
+pub struct GetBalance;
+
 use std::env::var;
 lazy_static::lazy_static! {
-    pub static ref ID: String = var("BANKER_ID").unwrap();
     pub static ref CHAT_ID: String = var("BANKER_CHAT").unwrap();
     pub static ref HN_TOKEN: String = var("HN_TOKEN").unwrap();
 }
@@ -114,8 +117,16 @@ pub async fn pay(user: String, amount: u64, reason: String) -> Result<(), String
     Ok(())
 }
 
-pub async fn balance() -> Result<(), String> {
-    message(format!("<@{}> balance", *ID))
+pub async fn get_balance() -> Result<u64, String> {
+    let query = GetBalance::build_query(get_balance::Variables {
+        user: BOT_ID.to_string(),
+    });
+
+    let result = do_query::<_, get_balance::ResponseData>(&query)
         .await
-        .map_err(|e| format!("Couldn't request balance: {}", e))
+        .expect("something bad happened")
+        .data
+        .expect("something bad happened");
+
+    Ok(result.user.balance as u64)
 }

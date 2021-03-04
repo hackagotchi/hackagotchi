@@ -1,6 +1,8 @@
 use super::prelude::*;
 use super::InvoicePaymentTrigger;
 
+use super::banker_message::banker_balance_trigger;
+
 pub struct Sale {
     name: String,
     price: u64,
@@ -126,7 +128,11 @@ fn hackmarket_fees<'a>(
             .map(|_| ()),
         }?;
 
-        banker::balance().await?;
+        let balance = banker::get_balance().await.expect("error getting balance");
+
+        banker_balance_trigger(&balance)
+            .await
+            .expect("error in balance trigger");
 
         Ok(())
     }

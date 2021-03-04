@@ -1,4 +1,4 @@
-query BalanceQuery($user: String!) {
+query GetBalance($user: String!) {
   user(id: $user) {
     id
     balance

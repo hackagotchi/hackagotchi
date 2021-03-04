@@ -117,18 +117,6 @@ pub async fn non_challenge_event<'a>(
                         .unwrap_or_else(|e| error!("{}", e));
                 }
             }
-        } else if r.channel == *banker::CHAT_ID {
-            for BankerMessageTrigger { regex, then } in BANKER_MESSAGE_TRIGGERS.iter() {
-                let c = match regex.captures(&r.text) {
-                    Some(c) => c,
-                    None => continue,
-                };
-                if let Err(e) = then(c, r.clone(), &to_farming).await {
-                    banker::message(format!("banker message handler err : {}", e))
-                        .await
-                        .unwrap_or_else(|e| error!("{}", e));
-                }
-            }
         }
     });
 
@@ -167,8 +155,5 @@ lazy_static::lazy_static! {
         &*invoice_payment::HACKMARKET_FEES,
         &*invoice_payment::HACKMARKET_PURCHASE,
         &*invoice_payment::START_HACKSTEAD_INVOICE_PAYMENT,
-    ];
-    pub static ref BANKER_MESSAGE_TRIGGERS: [&'static BankerMessageTrigger; 1] = [
-        &*banker_message::BANKER_BALANCE,
     ];
 }
