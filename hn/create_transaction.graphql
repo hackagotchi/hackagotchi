@@ -1,0 +1,10 @@
+mutation CreateTransaction(
+  $to: String!
+  $from: String!
+  $balance: Float!
+  $reason: String
+) {
+  transact(data: { to: $to, from: $from, balance: $balance, for: $reason }) {
+    id
+  }
+}

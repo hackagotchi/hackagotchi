@@ -1,0 +1,5 @@
+mutation Pay($to: String!, $from: String!, $amount: Float!, $reason: String) {
+  send(data: { to: $to, from: $from, balance: $amount, for: $reason }) {
+    id
+  }
+}
