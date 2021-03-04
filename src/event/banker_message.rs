@@ -2,7 +2,7 @@ use super::prelude::*;
 use super::BankerMessageTrigger;
 
 pub async fn banker_balance_trigger<'a>(balance: &u64) -> Result<(), String> {
-    info!("I got {} problems and GP ain't one", balance);
+    info!("I got {} problems and HN ain't one", balance);
 
     let query = dyn_db()
         .query(rusoto_dynamodb::QueryInput {
@@ -42,8 +42,8 @@ pub async fn banker_balance_trigger<'a>(balance: &u64) -> Result<(), String> {
                     json!({
                         "type": "section",
                         "text": mrkdwn(format!(
-                            "_It's free GP time, ladies and gentlegotchis!_\n\n\
-                            It seems your lovely Gotchi *{}* has collected *{} GP* for you!",
+                            "_It's free HN time, ladies and gentlegotchis!_\n\n\
+                            It seems your lovely Gotchi *{}* has collected *{} HN* for you!",
                             gotchi.inner.nickname,
                             gotchi.inner.base_happiness
                         )),
@@ -56,7 +56,7 @@ pub async fn banker_balance_trigger<'a>(balance: &u64) -> Result<(), String> {
                     comment("IN HACK WE STEAD")
                 ];
                 let payment_note = format!(
-                    "{} collected {} GP for you",
+                    "{} collected {} HN for you",
                     gotchi.inner.nickname,
                     gotchi.inner.base_happiness,
                 );
@@ -97,7 +97,7 @@ pub async fn banker_balance_trigger<'a>(balance: &u64) -> Result<(), String> {
 
                 async move {
                     futures::try_join!(
-                        dm_blocks(gotchi.steader.clone(), "It's GP Time! Your Gotchi produced some GP for you...".to_string(), dm),
+                        dm_blocks(gotchi.steader.clone(), "It's HN Time! Your Gotchi produced some HN for you...".to_string(), dm),
                         banker::pay(gotchi.steader.clone(), gotchi.inner.base_happiness, payment_note),
                         db.update_item(db_update).map_err(|e| format!("Couldn't update owner log: {}", e))
                     )?;
@@ -111,7 +111,7 @@ pub async fn banker_balance_trigger<'a>(balance: &u64) -> Result<(), String> {
     }
 
     futures::try_join!(
-        banker::message(format!("{} GP earned this harvest!", funds_awarded)),
+        banker::message(format!("{} HN earned this harvest!", funds_awarded)),
         banker::message(format!("total happiness: {}", total_happiness)),
     )?;
     Ok(())

@@ -131,7 +131,7 @@ fn gp_dump_command<'a>(
             .map_err(|e| format!("invalid dump amount: {}", e))?;
 
         info!("dumping {} to {}", dump_amount, dump_to);
-        banker::pay(dump_to, dump_amount, "GP dump".to_string()).await?;
+        banker::pay(dump_to, dump_amount, "HN dump".to_string()).await?;
         Ok(())
     }
     .boxed()

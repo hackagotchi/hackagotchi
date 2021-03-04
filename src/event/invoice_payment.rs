@@ -71,7 +71,7 @@ fn hackmarket_fees<'a>(
                 market::place_on_market(&db, key, price, name.clone()),
                 market::log_blocks(
                     format!(
-                        "A {} has gone up for sale for {} GP!",
+                        "A {} has gone up for sale for {} HN!",
                         possession.name, price
                     )
                     .to_string(),
@@ -80,7 +80,7 @@ fn hackmarket_fees<'a>(
                             "type": "section",
                             "text": mrkdwn(format!(
                                 "A *{}* has gone up for sale! \
-                                <@{}> is selling it on the hackmarket for *{} GP*!",
+                                <@{}> is selling it on the hackmarket for *{} HN*!",
                                 possession.name, paid_invoice.invoicee, price
                             )),
                             "accessory": {
@@ -173,13 +173,13 @@ fn hackmarket_purchase<'a>(
                     ),
                     dm_blocks(
                         paid_invoice.invoicee.clone(),
-                        "Sorry, you couldn't purchase that! Your GP has been refunded.".to_string(),
+                        "Sorry, you couldn't purchase that! Your HN has been refunded.".to_string(),
                         vec![json!({
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
                                 "The {} you tried to buy for {}hn is no longer on the market, ",
-                                "so your GP has been refunded."
+                                "so your HN has been refunded."
                             ),
                             name,
                             price
@@ -230,7 +230,7 @@ fn hackmarket_purchase<'a>(
             }).map_err(|e| format!("database err: {}", e)),
             banker::pay(seller.clone(), price, paid_for),
             market::log_blocks(
-                format!("<@{}> purchased a {} on hackmarket for {} GP!", 
+                format!("<@{}> purchased a {} on hackmarket for {} HN!", 
                 paid_invoice.invoicee,
                 name,
                 price
@@ -240,7 +240,7 @@ fn hackmarket_purchase<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             "The sale of a *{}* has gone through! \
-                            <@{}> made the purchase on hackmarket, earning <@{}> *{} GP*!",
+                            <@{}> made the purchase on hackmarket, earning <@{}> *{} HN*!",
                             name, paid_invoice.invoicee, seller, price
                         )),
                         "accessory": {
@@ -259,7 +259,7 @@ fn hackmarket_purchase<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             "The sale of your *{}* has gone through! \
-                            <@{}> made the purchase on hackmarket, earning you *{} GP*!",
+                            <@{}> made the purchase on hackmarket, earning you *{} HN*!",
                             name, paid_invoice.invoicee, price
                         )),
                         "accessory": {

@@ -293,7 +293,7 @@ fn gotchi_section(
     }));
     blocks.push(comment(
         "The total happiness of all your gotchi is equivalent to the \
-         amount of GP you'll get at the next Harvest.",
+         amount of hn you'll get at the next Harvest.",
     ));
 
     blocks
@@ -652,7 +652,7 @@ impl PossessionPage {
 
         if let Some(g) = possession.kind.gotchi() {
             blocks.push(comment(format!(
-                "*Lifetime GP harvested: {}*",
+                "*Lifetime HN harvested: {}*",
                 g.harvest_log.iter().map(|x| x.harvested).sum::<u64>(),
             )));
 
@@ -2159,7 +2159,7 @@ async fn action_endpoint(
                     comment("As a form of confirmation, you'll get an invoice to pay before your Item goes up on the market. \
                         To fund Harvests and to encourage Hacksteaders to keep prices sensible, \
                         this invoice is 5% of the price of your sale \
-                        rounded down to the nearest GP (meaning that sales below 20hn aren't taxed at all)."),
+                        rounded down to the nearest HN (meaning that sales below 20hn aren't taxed at all)."),
                 ],
                 submit: Some("Sell!".to_string()),
                 ..Default::default()
