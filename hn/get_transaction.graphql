@@ -1,0 +1,13 @@
+query GetTransaction($id: String!) {
+  transaction(id: $id) {
+    id
+    balance
+    for
+    to {
+      id
+    }
+    from {
+      id
+    }
+  }
+}

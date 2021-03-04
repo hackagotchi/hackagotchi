@@ -1,67 +1,49 @@
 use super::prelude::*;
 use super::BankerMessageTrigger;
 
-lazy_static::lazy_static! {
-    pub static ref BANKER_BALANCE: BankerMessageTrigger = BankerMessageTrigger {
-        regex: Regex::new("You have ([0-9]+)gp in your account, hackalacker.").unwrap(),
-        then: &banker_balance
-    };
-}
-fn banker_balance<'a>(
-    c: regex::Captures<'a>,
-    _: Message,
-    _: &'a Sender<FarmingInputEvent>,
-) -> HandlerOutput<'a> {
-    async move {
+pub async fn banker_balance_trigger<'a>(balance: &u64) -> Result<(), String> {
+    info!("I got {} problems and HN ain't one", balance);
 
-        let balance = c
-            .get(1)
-            .ok_or_else(|| "no gp amount".to_string())?
-            .as_str()
-            .parse::<u64>()
-            .map_err(|e| format!("error parsing number in banker balance msg: {}", e))?;
-        info!("I got {} problems and GP ain't one", balance);
+    let query = dyn_db()
+        .query(rusoto_dynamodb::QueryInput {
+            table_name: hcor::TABLE_NAME.to_string(),
+            key_condition_expression: Some("cat = :gotchi_cat".to_string()),
+            expression_attribute_values: Some({
+                [(":gotchi_cat".to_string(), Category::Gotchi.into_av())]
+                    .iter()
+                    .cloned()
+                    .collect()
+            }),
+            ..Default::default()
+        })
+        .await;
 
-        let query = dyn_db()
-            .query(rusoto_dynamodb::QueryInput {
-                table_name: hcor::TABLE_NAME.to_string(),
-                key_condition_expression: Some("cat = :gotchi_cat".to_string()),
-                expression_attribute_values: Some({
-                    [(":gotchi_cat".to_string(), Category::Gotchi.into_av())]
-                        .iter()
-                        .cloned()
-                        .collect()
-                }),
-                ..Default::default()
-            })
-            .await;
+    let gotchis = query
+        .map_err(|e| format!("couldn't query all gotchis: {}", e))?
+        .items
+        .ok_or("no gotchis found!")?
+        .iter()
+        .filter_map(|i| match Possession::from_item(i) {
+            Ok(p) => Some(Possessed::<Gotchi>::from_possession(p).unwrap()),
+            Err(e) => {
+                error!("error parsing gotchi: {}", e);
+                None
+            }
+        })
+        .filter(|g| g.inner.base_happiness > 0)
+        .collect::<Vec<Possessed<Gotchi>>>();
 
-        let gotchis = query
-            .map_err(|e| format!("couldn't query all gotchis: {}", e))?
-            .items
-            .ok_or("no gotchis found!")?
-            .iter()
-            .filter_map(|i| match Possession::from_item(i) {
-                Ok(p) => Some(Possessed::<Gotchi>::from_possession(p).unwrap()),
-                Err(e) => {
-                    error!("error parsing gotchi: {}", e);
-                    None
-                }
-            })
-            .filter(|g| g.inner.base_happiness > 0)
-            .collect::<Vec<Possessed<Gotchi>>>();
+    let total_happiness: u64 = gotchis.iter().map(|x| x.inner.base_happiness).sum();
+    let mut funds_awarded = 0;
 
-        let total_happiness: u64 = gotchis.iter().map(|x| x.inner.base_happiness).sum();
-        let mut funds_awarded = 0;
-
-        for _ in 0..balance / total_happiness {
-            stream::iter(gotchis.clone()).map(|x| Ok(x)).try_for_each_concurrent(None, |gotchi| {
+    for _ in 0..balance / total_happiness {
+        stream::iter(gotchis.clone()).map(|x| Ok(x)).try_for_each_concurrent(None, |gotchi| {
                 let dm = vec![
                     json!({
                         "type": "section",
                         "text": mrkdwn(format!(
-                            "_It's free GP time, ladies and gentlegotchis!_\n\n\
-                            It seems your lovely Gotchi *{}* has collected *{} GP* for you!",
+                            "_It's free HN time, ladies and gentlegotchis!_\n\n\
+                            It seems your lovely Gotchi *{}* has collected *{} HN* for you!",
                             gotchi.inner.nickname,
                             gotchi.inner.base_happiness
                         )),
@@ -74,7 +56,7 @@ fn banker_balance<'a>(
                     comment("IN HACK WE STEAD")
                 ];
                 let payment_note = format!(
-                    "{} collected {} GP for you",
+                    "{} collected {} HN for you",
                     gotchi.inner.nickname,
                     gotchi.inner.base_happiness,
                 );
@@ -115,7 +97,7 @@ fn banker_balance<'a>(
 
                 async move {
                     futures::try_join!(
-                        dm_blocks(gotchi.steader.clone(), "It's GP Time! Your Gotchi produced some GP for you...".to_string(), dm),
+                        dm_blocks(gotchi.steader.clone(), "It's HN Time! Your Gotchi produced some HN for you...".to_string(), dm),
                         banker::pay(gotchi.steader.clone(), gotchi.inner.base_happiness, payment_note),
                         db.update_item(db_update).map_err(|e| format!("Couldn't update owner log: {}", e))
                     )?;
@@ -125,14 +107,12 @@ fn banker_balance<'a>(
             .await
             .map_err(|e: String| format!("harvest msg send err: {}", e))?;
 
-            funds_awarded += total_happiness;
-        }
-
-        futures::try_join!(
-            banker::message(format!("{} GP earned this harvest!", funds_awarded)),
-            banker::message(format!("total happiness: {}", total_happiness)),
-        )?;
-        Ok(())
+        funds_awarded += total_happiness;
     }
-    .boxed()
+
+    futures::try_join!(
+        banker::message(format!("{} HN earned this harvest!", funds_awarded)),
+        banker::message(format!("total happiness: {}", total_happiness)),
+    )?;
+    Ok(())
 }

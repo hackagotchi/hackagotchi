@@ -1,6 +1,8 @@
 use super::prelude::*;
 use super::InvoicePaymentTrigger;
 
+use super::banker_message::banker_balance_trigger;
+
 pub struct Sale {
     name: String,
     price: u64,
@@ -44,13 +46,12 @@ impl Sale {
 
 lazy_static::lazy_static! {
     pub static ref HACKMARKET_FEES: InvoicePaymentTrigger = InvoicePaymentTrigger {
-        regex: Regex::new("hackmarket fees for selling (.+) at ([0-9]+)gp :(.+):([0-9])").unwrap(),
+        regex: Regex::new("hackmarket fees for selling (.+) at ([0-9]+)hn :(.+):([0-9])").unwrap(),
         then: &hackmarket_fees
     };
 }
 fn hackmarket_fees<'a>(
     c: regex::Captures<'a>,
-    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
@@ -70,7 +71,7 @@ fn hackmarket_fees<'a>(
                 market::place_on_market(&db, key, price, name.clone()),
                 market::log_blocks(
                     format!(
-                        "A {} has gone up for sale for {} GP!",
+                        "A {} has gone up for sale for {} HN!",
                         possession.name, price
                     )
                     .to_string(),
@@ -79,7 +80,7 @@ fn hackmarket_fees<'a>(
                             "type": "section",
                             "text": mrkdwn(format!(
                                 "A *{}* has gone up for sale! \
-                                <@{}> is selling it on the hackmarket for *{} GP*!",
+                                <@{}> is selling it on the hackmarket for *{} HN*!",
                                 possession.name, paid_invoice.invoicee, price
                             )),
                             "accessory": {
@@ -111,12 +112,12 @@ fn hackmarket_fees<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to sell for {}gp is no longer on the market{}"
+                                "The {} you tried to sell for {}hn is no longer on the market{}"
                             ),
                             name,
                             price,
                             if price >= 20 {
-                                format!(", so your {}gp market fee has been refunded.", price/20)
+                                format!(", so your {}hn market fee has been refunded.", price/20)
                             } else {
                                 ".".to_string()
                             }
@@ -127,7 +128,11 @@ fn hackmarket_fees<'a>(
             .map(|_| ()),
         }?;
 
-        banker::balance().await?;
+        let balance = banker::get_balance().await.expect("error getting balance");
+
+        banker_balance_trigger(&balance)
+            .await
+            .expect("error in balance trigger");
 
         Ok(())
     }
@@ -136,13 +141,12 @@ fn hackmarket_fees<'a>(
 
 lazy_static::lazy_static! {
     pub static ref HACKMARKET_PURCHASE: InvoicePaymentTrigger = InvoicePaymentTrigger {
-        regex: Regex::new("hackmarket purchase buying (.+) at ([0-9]+)gp :(.+):([0-9]) from <@([A-z|0-9]+)>").unwrap(),
+        regex: Regex::new("hackmarket purchase buying (.+) at ([0-9]+)hn :(.+):([0-9]) from <@([A-z|0-9]+)>").unwrap(),
         then: &hackmarket_purchase
     };
 }
 fn hackmarket_purchase<'a>(
     c: regex::Captures<'a>,
-    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
@@ -169,13 +173,13 @@ fn hackmarket_purchase<'a>(
                     ),
                     dm_blocks(
                         paid_invoice.invoicee.clone(),
-                        "Sorry, you couldn't purchase that! Your GP has been refunded.".to_string(),
+                        "Sorry, you couldn't purchase that! Your HN has been refunded.".to_string(),
                         vec![json!({
                         "type": "section",
                         "text": mrkdwn(format!(
                             concat!(
-                                "The {} you tried to buy for {}gp is no longer on the market, ",
-                                "so your GP has been refunded."
+                                "The {} you tried to buy for {}hn is no longer on the market, ",
+                                "so your HN has been refunded."
                             ),
                             name,
                             price
@@ -226,7 +230,7 @@ fn hackmarket_purchase<'a>(
             }).map_err(|e| format!("database err: {}", e)),
             banker::pay(seller.clone(), price, paid_for),
             market::log_blocks(
-                format!("<@{}> purchased a {} on hackmarket for {} GP!", 
+                format!("<@{}> purchased a {} on hackmarket for {} HN!", 
                 paid_invoice.invoicee,
                 name,
                 price
@@ -236,7 +240,7 @@ fn hackmarket_purchase<'a>(
                         "type": "section",
                         "text": mrkdwn(format!(
                             "The sale of a *{}* has gone through! \
-                            <@{}> made the purchase on hackmarket, earning <@{}> *{} GP*!",
+                            <@{}> made the purchase on hackmarket, earning <@{}> *{} HN*!",
                             name, paid_invoice.invoicee, seller, price
                         )),
                         "accessory": {
@@ -249,13 +253,13 @@ fn hackmarket_purchase<'a>(
                 ]),
                 dm_blocks(
                     seller.clone(),
-                    format!("Your sale went through! You earned {} gp.", price).to_string(),
+                    format!("Your sale went through! You earned {} hn.", price).to_string(),
                     vec![
                     json!({
                         "type": "section",
                         "text": mrkdwn(format!(
                             "The sale of your *{}* has gone through! \
-                            <@{}> made the purchase on hackmarket, earning you *{} GP*!",
+                            <@{}> made the purchase on hackmarket, earning you *{} HN*!",
                             name, paid_invoice.invoicee, price
                         )),
                         "accessory": {
@@ -286,7 +290,6 @@ lazy_static::lazy_static! {
 }
 fn start_hackstead_invoice_payment<'a>(
     _: regex::Captures<'a>,
-    _: Message,
     paid_invoice: banker::PaidInvoice,
 ) -> HandlerOutput<'a> {
     async move {
