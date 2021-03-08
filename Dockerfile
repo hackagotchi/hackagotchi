@@ -1,4 +1,4 @@
-FROM rust:1.50 as builder
+FROM rust:1.50
 
 WORKDIR /usr/src/app
 
@@ -9,10 +9,4 @@ RUN rustup toolchain install nightly && \
 
 RUN cargo build --release
 
-FROM debian:buster as runner
-
-WORKDIR /usr/src/app
-
-COPY --from=builder /usr/src/app/target/release/gotchi ./gotchi
-
-CMD [ "./gotchi" ]
+CMD ["./target/release/gotchi"]
