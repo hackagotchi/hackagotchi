@@ -11,5 +11,6 @@ jobs:
       - uses: actions/checkout@v2
       - uses: dokku/github-action@v1.0.2
         with:
+          git_push_flags: '--force'
           git_remote_url: "ssh://dokku@52.33.253.206:3022/hackagotchi"
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
