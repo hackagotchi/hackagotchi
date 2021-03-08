@@ -9,7 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-        with:
       - uses: dokku/github-action@v1
         with:
           git_remote_url: "ssh://dokku@52.33.253.206:3022/hackagotchi"
