@@ -591,6 +591,8 @@ dependencies = [
  "futures 0.3.13",
  "graphql_client",
  "hcor",
+ "hex",
+ "hmac",
  "humantime",
  "lazy_static",
  "log",
@@ -604,6 +606,7 @@ dependencies = [
  "rusoto_dynamodb",
  "serde",
  "serde_json",
+ "sha2",
  "uuid",
 ]
 

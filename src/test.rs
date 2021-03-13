@@ -5,12 +5,12 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct Test {
-    test: String,
+    team_id: String,
 }
 
-#[post("/test")]
-pub fn test() -> String {
+#[post("/test", data = "<request>")]
+pub fn test(request: SlackRequest<Test>) -> String {
     println!("nothing");
 
-    String::from("nothing")
+    request.0.team_id
 }
