@@ -21,6 +21,8 @@ pub mod event;
 pub mod hacksteader;
 mod hn_webhook;
 pub mod market;
+mod test;
+mod verification;
 
 use hn_webhook::{payment, transaction};
 
@@ -3986,7 +3988,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                 hgive,
                 event::event,
                 stateofsteading,
-                steadercount
+                steadercount,
+                test::test
             ],
         )
         .mount("/gotchi/img", StaticFiles::from("./img"))
