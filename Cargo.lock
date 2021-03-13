@@ -696,7 +696,7 @@ checksum = "d7afe4a420e3fe79967a00898cc1f4db7c8a49a9333a29f8a4bd76a253d5cd04"
 [[package]]
 name = "hcor"
 version = "1.2.2"
-source = "git+https://github.com/cjdenio/hcor.git#3815da070dc53a4880fcf48759c5eb6b1adebbb7"
+source = "git+https://github.com/hackagotchi/hcor.git#a47c8269f93852be58ab6c98fdd2642566342cf3"
 dependencies = [
  "derive_more",
  "dotenv",
