@@ -1511,7 +1511,7 @@ async fn hgive<'a>(slash_command: LenientForm<SlashCommand>) -> Json<Value> {
                         "alt_text": "hackagotchi img",
                     }
                 },
-                comment("TAKE THIS AND DONT TELL MOM")
+                comment("EY BRO TAEK DIS N DONT TELL MOM, OwO")
             ],
             "response_type": "in_channel",
             "text": notif_msg
@@ -3394,7 +3394,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
                                         "alt_text": "happy shiny egg give u stuffs",
                                     }
                                 }),
-                                comment("WAT I THOUGHT IT WAS ROCK"),
+                                comment("WAT I TAUGHT ET WAZ ROCC!?!?!!"),
                                 json!({ "type": "divider" }),
                             ];
 
