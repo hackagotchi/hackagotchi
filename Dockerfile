@@ -1,11 +1,8 @@
-FROM rust:1.50
+FROM rustlang/rust:nightly
 
 WORKDIR /usr/src/app
 
 COPY . .
-
-RUN rustup toolchain install nightly && \
-    rustup default nightly
 
 RUN cargo build --release
 
