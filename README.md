@@ -1,3 +1,14 @@
+# screenshots
+
+While it's true that just over a hundred people made at least one transaction in Hackagotchi, and that some people played it for hours a day, I like to think of its success in terms of how it took a small, close-knit community and made it more approachable, and how people who joined to play this open-ended game are still active in the community years later, long after it had been discontinued.
+
+And before I forget ... egg hatch wen?
+
+![farm](farm.png)
+![hackstreet](hackstreet.png)
+![bressence](bressence.png)
+
+
 # ![https://a.slack-edge.com/production-standard-emoji-assets/10.2/google-medium/26f0-fe0f@2x.png](https://a.slack-edge.com/production-standard-emoji-assets/10.2/google-medium/26f0-fe0f@2x.png) **Overview:** ![https://emoji.slack-edge.com/T0266FRGM/gempheus/f672da5597ba4abb.png](https://emoji.slack-edge.com/T0266FRGM/gempheus/f672da5597ba4abb.png)
 
 With Hackagotchi, you can have a farm and cute adorable Orphei that earn you passive income in GP.
